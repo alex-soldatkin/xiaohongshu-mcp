@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestGetCookiesFilePath 校验路径优先级：COOKIES_PATH > 当前目录 > /tmp（旧路径兜底）。
@@ -171,4 +173,49 @@ func TestSaveCookies_CreatesParentDir(t *testing.T) {
 	var cks []map[string]string
 	assert.NoError(t, json.Unmarshal(got, &cks))
 	assert.Equal(t, "a", cks[0]["name"])
+}
+
+// TestLoadSavedAt covers the three shapes a session file can have: v2 with a
+// timestamp, v1 (a bare cookie array, no timestamp at all) and no file.
+func TestLoadSavedAt(t *testing.T) {
+	t.Run("v2 file reports when it was written", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cookies.json")
+		store := NewLoadCookie(path)
+
+		before := time.Now().Add(-time.Second)
+		require.NoError(t, store.SaveCookies([]byte(`[{"name":"a"}]`)))
+		after := time.Now().Add(time.Second)
+
+		got := store.LoadSavedAt()
+		require.False(t, got.IsZero(), "saved_at must be set by SaveCookies")
+		assert.True(t, got.After(before) && got.Before(after), "saved_at %s outside [%s, %s]", got, before, after)
+	})
+
+	t.Run("v1 bare array has no timestamp", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cookies.json")
+		require.NoError(t, os.WriteFile(path, []byte(`[{"name":"a"}]`), 0o644))
+
+		assert.True(t, NewLoadCookie(path).LoadSavedAt().IsZero())
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cookies.json")
+		assert.True(t, NewLoadCookie(path).LoadSavedAt().IsZero())
+	})
+
+	t.Run("unparsable timestamp degrades to zero", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cookies.json")
+		require.NoError(t, os.WriteFile(path, []byte(`{"version":2,"saved_at":"yesterday","cookies":[]}`), 0o644))
+
+		assert.True(t, NewLoadCookie(path).LoadSavedAt().IsZero())
+	})
+
+	t.Run("saved_at round-trips through RFC3339 truncation", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cookies.json")
+		store := NewLoadCookie(path)
+		require.NoError(t, store.SaveCookies([]byte(`[]`)))
+
+		first := store.LoadSavedAt()
+		assert.Equal(t, first.Format(time.RFC3339), store.LoadSavedAt().Format(time.RFC3339))
+	})
 }

@@ -29,6 +29,13 @@ type Cookier interface {
 	LoadSeed() int
 	// SaveSeed 写入 seed，保留文件中已有的 cookies。
 	SaveSeed(seed int) error
+	// LoadSavedAt reports when the session file was last written, parsed from
+	// the v2 saved_at field. A v1 file (bare array), a missing file or an
+	// unparsable timestamp all yield the zero time.
+	//
+	// The persistent profile (issue #6) uses this to decide whether the file
+	// is newer than what the profile was last seeded from.
+	LoadSavedAt() time.Time
 }
 
 type localCookie struct {
@@ -74,6 +81,24 @@ func (c *localCookie) LoadSeed() int {
 		return 0
 	}
 	return f.Seed
+}
+
+// LoadSavedAt 读取 v2 文件的 saved_at。老格式、文件缺失或时间戳不可解析时返回零值。
+func (c *localCookie) LoadSavedAt() time.Time {
+	data, err := os.ReadFile(c.path)
+	if err != nil {
+		return time.Time{}
+	}
+
+	var f sessionFile
+	if err := json.Unmarshal(data, &f); err != nil || f.SavedAt == "" {
+		return time.Time{}
+	}
+	ts, err := time.Parse(time.RFC3339, f.SavedAt)
+	if err != nil {
+		return time.Time{}
+	}
+	return ts
 }
 
 // SaveCookies 保存 cookies 到文件中，保留文件里已有的 seed。
