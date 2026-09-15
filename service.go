@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/go-rod/rod"
 	"github.com/sirupsen/logrus"
-	"github.com/xpzouying/headless_browser"
 	"github.com/xpzouying/xiaohongshu-mcp/browser"
 	"github.com/xpzouying/xiaohongshu-mcp/configs"
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
@@ -27,11 +25,38 @@ type XiaohongshuService struct {
 	// gate serialises browser work and enforces the activity budgets.
 	// Every method that touches a browser goes through it via s.run.
 	gate *pacing.Gate
+
+	// browser owns the single long-lived browser and its persistent profile
+	// (issue #6). It is the only place a browser is launched.
+	browser *browser.Manager
 }
 
 // NewXiaohongshuService 创建小红书服务实例
 func NewXiaohongshuService() *XiaohongshuService {
-	return &XiaohongshuService{gate: pacing.New(pacing.ConfigFromEnv())}
+	profileDir := configs.ProfileDir()
+	logrus.Infof("browser profile directory: %s", profileDir)
+
+	return &XiaohongshuService{
+		gate: pacing.New(pacing.ConfigFromEnv()),
+		browser: browser.NewManager(browser.ManagerConfig{
+			Headless: configs.IsHeadless(),
+			Options: []browser.Option{
+				browser.WithFingerprintSeed(configs.FingerprintSeed()),
+				browser.WithProxy(configs.Proxy()),
+				browser.WithTimezone(configs.Timezone()),
+			},
+			ProfileDir: profileDir,
+			Session:    cookies.NewLoadCookie(cookies.GetCookiesFilePath()),
+			Lifecycle:  configs.BrowserLifecycleFromEnv(),
+		}),
+	}
+}
+
+// Close releases everything the service owns: the pending login scan, if any,
+// and the browser. Called from AppServer.Start after the HTTP server stops.
+func (s *XiaohongshuService) Close(ctx context.Context) {
+	s.logins.cancelCurrent()
+	s.browser.Shutdown(ctx)
 }
 
 // Gate exposes the pacing gate, so risk-control detection (issue #11) can trip
@@ -42,10 +67,11 @@ func (s *XiaohongshuService) Gate() *pacing.Gate {
 
 // run is the single path to a browser page.
 //
-// It takes the pacing slot for the given class, launches a browser, hands the
-// page to fn and tears everything down afterwards. Every service method below
-// goes through it, so no method can accidentally skip the gate. Errors from the
-// gate (*errors.ErrRateLimited) are returned to the caller unchanged.
+// It takes the pacing slot for the given class, leases a page from the shared
+// browser, hands it to fn and releases everything afterwards. Every service
+// method below goes through it, so no method can accidentally skip the gate.
+// Errors from the gate (*errors.ErrRateLimited) are returned to the caller
+// unchanged.
 func (s *XiaohongshuService) run(ctx context.Context, class pacing.Class, fn func(page *rod.Page) error) error {
 	release, err := s.gate.Acquire(ctx, class)
 	if err != nil {
@@ -53,13 +79,13 @@ func (s *XiaohongshuService) run(ctx context.Context, class pacing.Class, fn fun
 	}
 	defer release()
 
-	b := newBrowser()
-	defer b.Close()
+	lease, err := s.browser.Lease(ctx)
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
 
-	page := b.NewPage()
-	defer page.Close()
-
-	return fn(page)
+	return fn(lease.Page)
 }
 
 // PublishRequest 发布请求
@@ -128,11 +154,42 @@ type UserProfileResponse struct {
 	Feeds         []xiaohongshu.Feed             `json:"feeds"`
 }
 
-// DeleteCookies 删除 cookies 文件，用于登录重置
+// resetTimeout bounds how long "reset login" waits for an in-flight action to
+// finish before closing the browser underneath it.
+const resetTimeout = 30 * time.Second
+
+// DeleteCookies 删除 cookies 文件，用于登录重置。
+//
+// Deleting the file is no longer enough: the profile holds the live session, so
+// it has to go too, and the browser holding it open has to be closed first.
+//
+// The fingerprint seed is written straight back. The account logs out and logs
+// in again on the same device, which is what a human does; minting a new
+// fingerprint at the same moment as a new login would be the suspicious
+// version. The running process keeps the seed it already has, so the file and
+// the process agree either way.
 func (s *XiaohongshuService) DeleteCookies(ctx context.Context) error {
-	cookiePath := cookies.GetCookiesFilePath()
-	cookieLoader := cookies.NewLoadCookie(cookiePath)
-	return cookieLoader.DeleteCookies()
+	store := cookies.NewLoadCookie(cookies.GetCookiesFilePath())
+	seed := store.LoadSeed()
+
+	if err := store.DeleteCookies(); err != nil {
+		return err
+	}
+
+	resetCtx, cancel := context.WithTimeout(ctx, resetTimeout)
+	defer cancel()
+	if err := s.browser.Reset(resetCtx); err != nil {
+		return err
+	}
+
+	if seed > 0 {
+		if err := store.SaveSeed(seed); err != nil {
+			// The account can still log in; it would just come back on a new
+			// fingerprint after the next restart.
+			logrus.Warnf("重置登录后保存 seed 失败: %v", err)
+		}
+	}
+	return nil
 }
 
 // CheckLoginStatus 检查登录状态
@@ -182,14 +239,19 @@ func (s *XiaohongshuService) GetLoginQrcode(ctx context.Context) (*LoginQrcodeRe
 		return nil, err
 	}
 
-	b := newBrowser()
-	page := b.NewPage()
+	// The lease keeps the browser alive for the whole scan wait, which also
+	// stops the idle timer and defers any due recycle until the scan is over.
+	lease, err := s.browser.Lease(ctx)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	page := lease.Page
 
 	var once sync.Once
 	deferFunc := func() {
 		once.Do(func() {
-			_ = page.Close()
-			b.Close()
+			lease.Release()
 			release()
 		})
 	}
@@ -239,7 +301,9 @@ func (s *XiaohongshuService) waitScanInBackground(
 		defer s.logins.finish(seq)
 
 		if loginAction.WaitForLogin(ctxTimeout) {
-			if err := saveCookies(page); err != nil {
+			// Export explicitly while the page is still leased: the browser has
+			// to be alive to read its cookie jar.
+			if err := s.browser.ExportCookies(); err != nil {
 				logrus.Errorf("扫码成功但保存 cookies 失败，会话 #%d: %v", seq, err)
 				return
 			}
@@ -644,29 +708,6 @@ func (s *XiaohongshuService) ReplyNotification(ctx context.Context, commentID, c
 	}
 
 	return result, nil
-}
-
-func newBrowser() *headless_browser.Browser {
-	return browser.NewBrowser(configs.IsHeadless(),
-		browser.WithFingerprintSeed(configs.FingerprintSeed()),
-		browser.WithProxy(configs.Proxy()),
-		browser.WithTimezone(configs.Timezone()),
-	)
-}
-
-func saveCookies(page *rod.Page) error {
-	cks, err := page.Browser().GetCookies()
-	if err != nil {
-		return err
-	}
-
-	data, err := json.Marshal(cks)
-	if err != nil {
-		return err
-	}
-
-	cookieLoader := cookies.NewLoadCookie(cookies.GetCookiesFilePath())
-	return cookieLoader.SaveCookies(data)
 }
 
 // GetMyProfile 获取当前登录用户的个人信息

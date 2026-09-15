@@ -1,11 +1,16 @@
+// Command login opens a visible browser, walks the QR login and stores the
+// session.
+//
+// It shares the persistent profile with the server (issue #6), so the login it
+// performs is the one the server will find. That also means it must not run
+// while the server is up: Chrome allows exactly one process per profile, and
+// the second one is refused with an error naming the pid holding the lock.
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 
-	"github.com/go-rod/rod"
 	"github.com/sirupsen/logrus"
 	"github.com/xpzouying/xiaohongshu-mcp/browser"
 	"github.com/xpzouying/xiaohongshu-mcp/configs"
@@ -20,19 +25,33 @@ func main() {
 	// 登录与后续运行共用同一个 seed：首次登录生成并写入会话文件，之后一直复用。
 	store := cookies.NewLoadCookie(cookies.GetCookiesFilePath())
 
-	b := browser.NewBrowser(false,
-		browser.WithFingerprintSeed(configs.ResolveFingerprintSeed(store)),
-		browser.WithProxy(configs.ProxyFromEnv()),
-		browser.WithTimezone(configs.TimezoneFromEnv()),
-	)
-	defer b.Close()
+	profileDir := configs.ProfileDir()
+	logrus.Infof("browser profile directory: %s", profileDir)
 
-	page := b.NewPage()
-	defer page.Close()
+	// Same manager as the server, so seeding, cookie export and the seed marker
+	// are one code path rather than two that drift apart.
+	manager := browser.NewManager(browser.ManagerConfig{
+		Headless: false,
+		Options: []browser.Option{
+			browser.WithFingerprintSeed(configs.ResolveFingerprintSeed(store)),
+			browser.WithProxy(configs.ProxyFromEnv()),
+			browser.WithTimezone(configs.TimezoneFromEnv()),
+		},
+		ProfileDir: profileDir,
+		Session:    store,
+	})
+	ctx := context.Background()
+	defer manager.Shutdown(ctx)
 
-	action := xiaohongshu.NewLogin(page)
+	lease, err := manager.Lease(ctx)
+	if err != nil {
+		logrus.Fatalf("failed to start the browser: %v", err)
+	}
+	defer lease.Release()
 
-	status, err := action.CheckLoginStatus(context.Background())
+	action := xiaohongshu.NewLogin(lease.Page)
+
+	status, err := action.CheckLoginStatus(ctx)
 	if err != nil {
 		logrus.Fatalf("failed to check login status: %v", err)
 	}
@@ -45,16 +64,15 @@ func main() {
 
 	// 开始登录流程
 	logrus.Info("开始登录流程...")
-	if err = action.Login(context.Background()); err != nil {
+	if err = action.Login(ctx); err != nil {
 		logrus.Fatalf("登录失败: %v", err)
-	} else {
-		if err := saveCookies(page); err != nil {
-			logrus.Fatalf("failed to save cookies: %v", err)
-		}
+	}
+	if err := manager.ExportCookies(); err != nil {
+		logrus.Fatalf("failed to save cookies: %v", err)
 	}
 
 	// 再次检查登录状态确认成功
-	status, err = action.CheckLoginStatus(context.Background())
+	status, err = action.CheckLoginStatus(ctx)
 	if err != nil {
 		logrus.Fatalf("failed to check login status after login: %v", err)
 	}
@@ -64,20 +82,4 @@ func main() {
 	} else {
 		logrus.Error("登录流程完成但仍未登录")
 	}
-
-}
-
-func saveCookies(page *rod.Page) error {
-	cks, err := page.Browser().GetCookies()
-	if err != nil {
-		return err
-	}
-
-	data, err := json.Marshal(cks)
-	if err != nil {
-		return err
-	}
-
-	cookieLoader := cookies.NewLoadCookie(cookies.GetCookiesFilePath())
-	return cookieLoader.SaveCookies(data)
 }

@@ -13,6 +13,10 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// browserShutdownTimeout bounds how long a stop waits for an in-flight action
+// before the browser is closed underneath it.
+const browserShutdownTimeout = 15 * time.Second
+
 // AppServer 应用服务器结构体，封装所有服务和处理器
 type AppServer struct {
 	xiaohongshuService *XiaohongshuService
@@ -68,6 +72,16 @@ func (s *AppServer) Start(port string) error {
 	} else {
 		logrus.Infof("服务器已优雅关闭")
 	}
+
+	// The browser outlives individual requests now, so it has to be closed
+	// here. Its own deadline is longer than the HTTP one: closing Chrome takes
+	// a second or two, but a publish in flight has to be waited out, and
+	// killing it mid-upload is worse than a slow stop. Docker deployments
+	// should give the container a matching stop_grace_period.
+	browserCtx, browserCancel := context.WithTimeout(context.Background(), browserShutdownTimeout)
+	defer browserCancel()
+	s.xiaohongshuService.Close(browserCtx)
+	logrus.Infof("浏览器已关闭")
 
 	return nil
 }
