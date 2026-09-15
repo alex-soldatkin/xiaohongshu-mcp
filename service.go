@@ -170,7 +170,14 @@ const resetTimeout = 30 * time.Second
 // the process agree either way.
 func (s *XiaohongshuService) DeleteCookies(ctx context.Context) error {
 	store := cookies.NewLoadCookie(cookies.GetCookiesFilePath())
-	seed := store.LoadSeed()
+
+	// The seed the process is actually running with wins over the file's copy:
+	// with XHS_FP_SEED set they can differ, and the file must describe the
+	// device the next login will present.
+	seed := configs.FingerprintSeed()
+	if seed <= 0 {
+		seed = store.LoadSeed()
+	}
 
 	if err := store.DeleteCookies(); err != nil {
 		return err
