@@ -147,6 +147,33 @@ services:
 Lifecycle overrides: `XHS_BROWSER_IDLE` (default `10m`), `XHS_BROWSER_MAX_PAGES`
 (`200`), `XHS_BROWSER_MAX_AGE` (`24h`); `0` disables a policy.
 
+## 4.6 PostgreSQL persistence (optional)
+
+Caching fetched data in PostgreSQL is opt-in, so the database is in a separate
+overlay file and the default `docker-compose.yml` stays database-free:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+```
+
+The overlay adds a `postgres:16-alpine` service, waits for `pg_isready` before
+starting the MCP server, and sets `XHS_DATABASE_URL` for it. Its data lives in
+`docker/pgdata/`, which is git-ignored, and it deliberately publishes no port:
+nothing outside the compose network needs the database, and the rows include
+one account's private notifications.
+
+Override the defaults before doing anything less private than a local
+deployment:
+
+```bash
+POSTGRES_USER=xhs POSTGRES_PASSWORD=$(openssl rand -hex 16) POSTGRES_DB=xiaohongshu \
+  docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+```
+
+Schema migrations are applied by the server at startup and are safe to run from
+several containers at once. A database that is configured but unreachable stops
+the server rather than being silently skipped.
+
 ## 5. 配置访问鉴权（可选）
 
 不设置或设置为空时，鉴权默认关闭。生产环境建议通过 `AUTH_TOKEN` 环境变量配置访问令牌。

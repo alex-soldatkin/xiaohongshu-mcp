@@ -525,6 +525,40 @@ Two notes worth knowing before something surprises you:
 as the file, and writes the fingerprint seed straight back: the account logs out
 and in again on the same device.
 
+**Persistence (optional)**:
+
+Fetched data can be kept in PostgreSQL instead of being thrown away, so that
+asking twice for the same note costs one page load rather than two. It is off
+by default: with `XHS_DATABASE_URL` unset the server keeps no database at all
+and behaves exactly as before.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `XHS_DATABASE_URL` | unset | `postgres://user:pass@host:5432/db`; unset means no persistence |
+
+Set it and the server connects at startup, applies its schema migrations
+itself, and logs the URL with the password masked. A URL that is set but
+unreachable is fatal, the same way a missing browser is: an operator who
+configured a database should find out at startup, not discover months later
+that nothing was ever cached. Only `postgres://` and `postgresql://` are
+understood; any other scheme is rejected rather than quietly ignored.
+
+The database holds a document cache keyed by account, and an append-only log of
+notifications and comments. It is scoped by the Xiaohongshu user id, so two
+accounts driven from one deployment never see each other's data.
+
+With Docker, the database comes from an overlay file rather than the default
+compose file, because the store is optional:
+
+```bash
+cd docker
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+```
+
+The overlay waits for `pg_isready` before starting the server, keeps its data
+in `docker/pgdata/`, and does not publish port 5432 — nothing outside the
+compose network needs it.
+
 **访问鉴权（可选）**：
 
 默认关闭鉴权。生产环境建议使用 `AUTH_TOKEN` 环境变量配置；非空的启动参数优先于环境变量，留空则读取 `AUTH_TOKEN`。

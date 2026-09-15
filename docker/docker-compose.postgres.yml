@@ -1,0 +1,43 @@
+# PostgreSQL overlay for the persistence layer (issue #7).
+#
+# The store is optional, so it is not in the default compose file: a
+# single-user local server should not have to stand up a database. Opt in with
+#
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up -d
+#
+# The credentials below are defaults for a database that is only reachable from
+# the compose network. Override POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+# in the environment, or in a .env file next to this one, before exposing it to
+# anything else.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: xiaohongshu-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-xhs}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-xhs}
+      - POSTGRES_DB=${POSTGRES_DB:-xiaohongshu}
+    volumes:
+      - ./pgdata:/var/lib/postgresql/data
+    # The MCP server treats an unreachable database as fatal at startup, so it
+    # must not start before Postgres is accepting connections. pg_isready is
+    # the check, not a TCP probe: the port opens before recovery finishes.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-xhs} -d ${POSTGRES_DB:-xiaohongshu}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    # No ports section on purpose. Nothing outside the compose network needs
+    # this database; publishing 5432 by default would put a cache of one
+    # account's private notifications on the host's network interface.
+
+  xiaohongshu-mcp:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # sslmode=disable because this connection never leaves the compose
+      # network and the server image has no CA bundle to verify against.
+      - XHS_DATABASE_URL=postgres://${POSTGRES_USER:-xhs}:${POSTGRES_PASSWORD:-xhs}@postgres:5432/${POSTGRES_DB:-xiaohongshu}?sslmode=disable

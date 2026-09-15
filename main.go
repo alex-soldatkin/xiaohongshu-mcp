@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 
@@ -8,6 +9,11 @@ import (
 	"github.com/xpzouying/xiaohongshu-mcp/browser"
 	"github.com/xpzouying/xiaohongshu-mcp/configs"
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
+	"github.com/xpzouying/xiaohongshu-mcp/pkg/store"
+
+	// Linked for its side effect: it registers the postgres:// and
+	// postgresql:// schemes with store.Open. Nothing here calls into it.
+	_ "github.com/xpzouying/xiaohongshu-mcp/pkg/store/pgstore"
 )
 
 // version 构建版本号，发布时通过 -ldflags "-X main.version=vX.Y.Z" 注入。
@@ -44,6 +50,23 @@ func main() {
 	configs.SetProxy(configs.ProxyFromEnv())
 	// 时区独立于宿主机：默认 Asia/Shanghai，XHS_TIMEZONE 可覆盖（issue #2）。
 	configs.SetTimezone(configs.TimezoneFromEnv())
+
+	// Persistence layer (issue #7). XHS_DATABASE_URL unset is the default
+	// deployment: store.Open returns a no-op store and behaviour is unchanged.
+	// Set but unreachable is fatal, mirroring the missing-browser check above
+	// — degrading quietly would leave an operator believing the cache works.
+	// The read-through cache that consumes this store arrives with WS2; the
+	// store is opened here regardless so the reachability check happens at
+	// startup rather than on the first cached read.
+	databaseURL := os.Getenv("XHS_DATABASE_URL")
+	dataStore, err := store.Open(context.Background(), databaseURL)
+	if err != nil {
+		logrus.Fatalf("persistence: %v", err)
+	}
+	defer func() { _ = dataStore.Close() }()
+	if databaseURL != "" {
+		logrus.Infof("persistence: using %s", store.Redact(databaseURL))
+	}
 
 	// 初始化服务
 	xiaohongshuService := NewXiaohongshuService()
