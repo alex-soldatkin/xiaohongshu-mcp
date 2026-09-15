@@ -251,8 +251,15 @@ func buildOptions(cfg *browserConfig) []headless_browser.Option {
 func pageSetupHook(cfg *browserConfig) func(*rod.Page) error {
 	g := deriveGeometry(cfg.fingerprintSeed, resolvePlatform())
 	return func(page *rod.Page) error {
-		if err := applyGeometry(page, g); err != nil {
-			return err
+		// Headful is for a human: the QR login, and debugging. Pinning the
+		// viewport there letterboxes the page inside a differently-sized OS
+		// window, which looks like a broken non-responsive layout. The override
+		// exists to make headless geometry coherent (#1); headless is also the
+		// only mode Xiaohongshu ever sees, so skipping it here costs nothing.
+		if cfg.headless {
+			if err := applyGeometry(page, g); err != nil {
+				return err
+			}
 		}
 		// ICU locale (#9). navigator.language says zh-CN while
 		// Intl.DateTimeFormat().resolvedOptions().locale otherwise reports the
