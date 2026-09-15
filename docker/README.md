@@ -121,6 +121,32 @@ environment:
 Using proxy: http://***:***@proxy:port
 ```
 
+## 4.5 Browser profile (persistent session)
+
+The container keeps one browser alive with a persistent Chrome profile. With the
+compose file above it lands in `/app/data/profile`, inside the volume that
+already holds `cookies.json`, so the login survives `docker compose down && up`.
+`XHS_PROFILE_DIR` moves it.
+
+Two operational rules:
+
+- **One container per profile directory.** Chrome allows a single instance per
+  user-data directory. The server clears a lock left by a container that no
+  longer exists (the hostname is the container id, so a recreate always looks
+  like a foreign owner), which means two containers sharing one volume would
+  both start and corrupt the profile between them.
+- **Give the container time to stop.** Chrome has to flush the profile to disk,
+  and an action in flight is waited out for up to 15 seconds:
+
+```yaml
+services:
+  xiaohongshu-mcp:
+    stop_grace_period: 20s
+```
+
+Lifecycle overrides: `XHS_BROWSER_IDLE` (default `10m`), `XHS_BROWSER_MAX_PAGES`
+(`200`), `XHS_BROWSER_MAX_AGE` (`24h`); `0` disables a policy.
+
 ## 5. 配置访问鉴权（可选）
 
 不设置或设置为空时，鉴权默认关闭。生产环境建议通过 `AUTH_TOKEN` 环境变量配置访问令牌。

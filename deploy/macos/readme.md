@@ -39,6 +39,21 @@ launchctl stop xhsmcp
 launchctl list | grep xhsmcp
 ```
 
+### Browser profile
+
+The server keeps one browser alive with a persistent Chrome profile, stored in
+`profile/` next to `cookies.json` in the working directory (`XHS_PROFILE_DIR`
+overrides). Three consequences for a launchd deployment:
+
+- The working directory in the plist must be writable, not just readable.
+- `cmd/login` cannot run while the service is up: Chrome allows one process per
+  profile, and the second one stops with an error naming the pid holding the
+  lock. `launchctl stop xhsmcp` first.
+- `launchctl stop` signals the process, which closes Chrome cleanly. After a
+  `kill -9`, an orphaned Chrome may keep the profile lock; the next start then
+  reports the pid, and killing that process is enough — do not delete the
+  profile.
+
 ### Shell 脚本管理 （进阶用法）
 
 如果你使用 fish shell，可以安装该目录下的 xhsmcp.fish，实现类似这样的效果：

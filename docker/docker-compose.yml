@@ -6,6 +6,9 @@ services:
     # image: crpi-hocnvtkomt7w9v8t.cn-beijing.personal.cr.aliyuncs.com/xpzouying/xiaohongshu-mcp
     container_name: xiaohongshu-mcp
     restart: unless-stopped
+    # Chrome has to flush the persistent profile to disk, and an action in
+    # flight is waited out for up to 15s before the browser is closed.
+    stop_grace_period: 20s
     tty: true
     volumes:
       - ./data:/app/data

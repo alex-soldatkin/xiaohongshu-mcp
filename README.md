@@ -499,6 +499,32 @@ XHS_PROXY=http://proxy:port go run .
 
 支持 HTTP/HTTPS/SOCKS5 代理，日志中会自动隐藏代理的认证信息。
 
+**Browser profile and lifecycle (optional)**:
+
+The server keeps one browser alive and gives it a persistent Chrome profile, so
+localStorage, IndexedDB and the live cookie jar survive between actions. The
+profile is the canonical session; `cookies.json` is a backup, rewritten after
+every action and replayed only when it is newer than what the profile holds.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `XHS_PROFILE_DIR` | `profile/` next to `cookies.json` | Chrome user-data directory |
+| `XHS_BROWSER_IDLE` | `10m` | close the browser after this long with no work; `0` keeps it up |
+| `XHS_BROWSER_MAX_PAGES` | `200` | relaunch after this many pages; `0` never |
+| `XHS_BROWSER_MAX_AGE` | `24h` | relaunch after this much uptime; `0` never |
+
+Two notes worth knowing before something surprises you:
+
+- One process per profile. Chrome allows a single instance per user-data
+  directory, so `cmd/login` cannot run while the server is up. It stops with an
+  error naming the pid that holds the lock rather than corrupting the profile.
+- With `-headless=false` the window stays open until the idle timeout, not just
+  for the duration of one call.
+
+"Reset login" (`DELETE /api/v1/login/cookies`) now deletes the profile as well
+as the file, and writes the fingerprint seed straight back: the account logs out
+and in again on the same device.
+
 **访问鉴权（可选）**：
 
 默认关闭鉴权。生产环境建议使用 `AUTH_TOKEN` 环境变量配置；非空的启动参数优先于环境变量，留空则读取 `AUTH_TOKEN`。
