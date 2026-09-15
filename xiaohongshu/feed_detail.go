@@ -804,25 +804,33 @@ func getCommentCount(page *rod.Page) int {
 // getTotalCommentCount 取笔记的评论总数，读 __INITIAL_STATE__ 里的
 // interactInfo.commentCount，不依赖评论区文案。取不到返回 0。
 func getTotalCommentCount(page *rod.Page) int {
-	res, err := page.Eval(`() => {
-		const m = window.__INITIAL_STATE__?.note?.noteDetailMap;
-		if (!m) return "";
-		for (const v of Object.values(m)) {
-			const c = v?.note?.interactInfo?.commentCount;
-			if (c !== undefined && c !== null) return String(c);
-		}
-		return "";
-	}`)
+	// commentCount 在页面上有时是数字、有时是字符串，用 json.Number 两种都收。
+	var noteDetailMap map[string]struct {
+		Note struct {
+			InteractInfo struct {
+				CommentCount json.Number `json:"commentCount"`
+			} `json:"interactInfo"`
+		} `json:"note"`
+	}
+	ok, err := readState(page, "note.noteDetailMap", &noteDetailMap)
 	if err != nil {
 		logrus.Debugf("获取总评论计数失败: %v", err)
 		return 0
 	}
-
-	count, err := strconv.Atoi(strings.TrimSpace(res.Value.Str()))
-	if err != nil {
+	if !ok {
 		return 0
 	}
-	return count
+
+	for _, v := range noteDetailMap {
+		raw := strings.TrimSpace(v.Note.InteractInfo.CommentCount.String())
+		if raw == "" {
+			continue
+		}
+		if count, err := strconv.Atoi(raw); err == nil {
+			return count
+		}
+	}
+	return 0
 }
 
 func checkNoCommentsArea(page *rod.Page) bool {
@@ -945,15 +953,10 @@ func (f *FeedDetailAction) extractFeedDetail(page *rod.Page, feedID string) (*Fe
 	// 使用retry-go来处理可能的DOM查询失败
 	err := retry.Do(
 		func() error {
-			evalResult := page.MustEval(`() => {
-				if (window.__INITIAL_STATE__ &&
-					window.__INITIAL_STATE__.note &&
-					window.__INITIAL_STATE__.note.noteDetailMap) {
-					const noteDetailMap = window.__INITIAL_STATE__.note.noteDetailMap;
-					return JSON.stringify(noteDetailMap);
-				}
-				return "";
-			}`).String()
+			evalResult, err := readStateJSON(page, "note.noteDetailMap")
+			if err != nil {
+				return err
+			}
 
 			if evalResult != "" {
 				result = evalResult
@@ -1002,8 +1005,5 @@ func (f *FeedDetailAction) extractFeedDetail(page *rod.Page, feedID string) (*Fe
 // token came from — the site uses pc_search from search results and pc_note
 // from profiles — and must agree with the Referer sent alongside it.
 func makeFeedDetailURL(feedID, xsecToken, xsecSource string) string {
-	if xsecSource == "" {
-		xsecSource = xsecSourceFeed
-	}
-	return fmt.Sprintf("https://www.xiaohongshu.com/explore/%s?xsec_token=%s&xsec_source=%s", feedID, xsecToken, xsecSource)
+	return ActiveSite().NoteURL(feedID, xsecToken, xsecSource)
 }

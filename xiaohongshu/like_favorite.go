@@ -2,7 +2,6 @@ package xiaohongshu
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -217,18 +216,6 @@ func (a *FavoriteAction) perform(ctx context.Context, feedID, xsecToken string, 
 // getInteractState 从 __INITIAL_STATE__ 读取笔记的点赞/收藏状态
 func (a *interactAction) getInteractState(page *rod.Page, feedID string) (liked bool, collected bool, err error) {
 
-	result := page.MustEval(`() => {
-		if (window.__INITIAL_STATE__ &&
-		    window.__INITIAL_STATE__.note &&
-		    window.__INITIAL_STATE__.note.noteDetailMap) {
-			return JSON.stringify(window.__INITIAL_STATE__.note.noteDetailMap);
-		}
-		return "";
-	}`).String()
-	if result == "" {
-		return false, false, myerrors.ErrNoFeedDetail
-	}
-
 	var noteDetailMap map[string]struct {
 		Note struct {
 			InteractInfo struct {
@@ -237,8 +224,12 @@ func (a *interactAction) getInteractState(page *rod.Page, feedID string) (liked 
 			} `json:"interactInfo"`
 		} `json:"note"`
 	}
-	if err := json.Unmarshal([]byte(result), &noteDetailMap); err != nil {
-		return false, false, errors.Wrap(err, "unmarshal noteDetailMap failed")
+	ok, err := readState(page, "note.noteDetailMap", &noteDetailMap)
+	if err != nil {
+		return false, false, errors.Wrap(err, "read noteDetailMap failed")
+	}
+	if !ok {
+		return false, false, myerrors.ErrNoFeedDetail
 	}
 
 	detail, ok := noteDetailMap[feedID]

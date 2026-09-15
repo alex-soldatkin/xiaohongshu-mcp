@@ -2,7 +2,6 @@ package xiaohongshu
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -59,43 +58,14 @@ func (u *UserProfileAction) UserProfile(ctx context.Context, userID, xsecToken s
 		return nil, err
 	}
 
-	return u.extractUserProfileData(page, tab)
+	return u.extractUserProfileData(ctx, page, tab)
 }
 
 // extractUserProfileData 从页面中提取用户资料数据的通用方法
-func (u *UserProfileAction) extractUserProfileData(page *rod.Page, tab ProfileTab) (*UserProfileResponse, error) {
-	page.MustWait(`() => window.__INITIAL_STATE__ !== undefined`)
-
-	userDataResult := page.MustEval(`() => {
-		if (window.__INITIAL_STATE__ &&
-		    window.__INITIAL_STATE__.user &&
-		    window.__INITIAL_STATE__.user.userPageData) {
-			const userPageData = window.__INITIAL_STATE__.user.userPageData;
-			const data = userPageData.value !== undefined ? userPageData.value : userPageData._value;
-			if (data) {
-				return JSON.stringify(data);
-			}
-		}
-		return "";
-	}`).String()
-
-	if userDataResult == "" {
-		return nil, fmt.Errorf("user.userPageData.value not found in __INITIAL_STATE__")
-	}
-
-	// 2. 获取用户帖子及当前 tab：window.__INITIAL_STATE__.user
-	notesResult := page.MustEval(`() => {
-		const u = window.__INITIAL_STATE__ && window.__INITIAL_STATE__.user;
-		if (!u || !u.notes) return "";
-		const unwrap = (o) => (o && o.value !== undefined) ? o.value : (o && o._value);
-		const notes = unwrap(u.notes);
-		if (!notes) return "";
-		const active = unwrap(u.activeTab) || {};
-		return JSON.stringify({notes: notes, index: active.index || 0, query: active.query || ""});
-	}`).String()
-
-	if notesResult == "" {
-		return nil, fmt.Errorf("user.notes.value not found in __INITIAL_STATE__")
+func (u *UserProfileAction) extractUserProfileData(ctx context.Context, page *rod.Page, tab ProfileTab) (*UserProfileResponse, error) {
+	// 等资料注水。原先等的是 __INITIAL_STATE__ 本身存在，而它从首屏起就在，等于没等。
+	if err := waitState(ctx, page, "user.userPageData", 10*time.Second); err != nil {
+		return nil, fmt.Errorf("user.userPageData not found in __INITIAL_STATE__: %w", err)
 	}
 
 	// 解析用户信息
@@ -103,17 +73,27 @@ func (u *UserProfileAction) extractUserProfileData(page *rod.Page, tab ProfileTa
 		Interactions []UserInteractions `json:"interactions"`
 		BasicInfo    UserBasicInfo      `json:"basicInfo"`
 	}
-	if err := json.Unmarshal([]byte(userDataResult), &userPageData); err != nil {
+	if ok, err := readState(page, "user.userPageData", &userPageData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal userPageData: %w", err)
+	} else if !ok {
+		return nil, fmt.Errorf("user.userPageData not found in __INITIAL_STATE__")
 	}
 
-	var notesData struct {
-		Notes [][]Feed `json:"notes"`
-		Index int      `json:"index"`
-		Query string   `json:"query"`
+	// 2. 获取用户帖子
+	var notes [][]Feed
+	if ok, err := readState(page, "user.notes", &notes); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, fmt.Errorf("user.notes not found in __INITIAL_STATE__")
 	}
-	if err := json.Unmarshal([]byte(notesResult), &notesData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal notes: %w", err)
+
+	// 3. 当前 tab。读不到就按默认下标 0、不校验 tab 处理——原先的 JS 也是这么兜底的。
+	var activeTab struct {
+		Index int    `json:"index"`
+		Query string `json:"query"`
+	}
+	if _, err := readState(page, "user.activeTab", &activeTab); err != nil {
+		return nil, err
 	}
 
 	// tab 不符时报错，避免把别的 tab 的内容当成结果返回
@@ -121,8 +101,8 @@ func (u *UserProfileAction) extractUserProfileData(page *rod.Page, tab ProfileTa
 	if want == "" {
 		want = TabNotes
 	}
-	if notesData.Query != "" && ProfileTab(notesData.Query) != want {
-		return nil, fmt.Errorf("当前 tab 为 %q，与请求的 %q 不符", notesData.Query, want)
+	if activeTab.Query != "" && ProfileTab(activeTab.Query) != want {
+		return nil, fmt.Errorf("当前 tab 为 %q，与请求的 %q 不符", activeTab.Query, want)
 	}
 
 	// 组装响应
@@ -132,8 +112,8 @@ func (u *UserProfileAction) extractUserProfileData(page *rod.Page, tab ProfileTa
 	}
 
 	// 每个 tab 的内容存在各自的下标里，只取当前 tab 的，避免混入其他 tab
-	if notesData.Index >= 0 && notesData.Index < len(notesData.Notes) {
-		response.Feeds = append(response.Feeds, notesData.Notes[notesData.Index]...)
+	if activeTab.Index >= 0 && activeTab.Index < len(notes) {
+		response.Feeds = append(response.Feeds, notes[activeTab.Index]...)
 	}
 
 	// Notes listed on a profile carry pc_note, not pc_feed.
@@ -143,11 +123,7 @@ func (u *UserProfileAction) extractUserProfileData(page *rod.Page, tab ProfileTa
 }
 
 func makeUserProfileURL(userID, xsecToken string, tab ProfileTab) string {
-	url := fmt.Sprintf("https://www.xiaohongshu.com/user/profile/%s?xsec_token=%s&xsec_source=%s", userID, xsecToken, xsecSourceNote)
-	if tab != "" && tab != TabNotes {
-		url += fmt.Sprintf("&tab=%s&subTab=note", tab)
-	}
-	return url
+	return ActiveSite().UserProfileURL(userID, xsecToken, tab)
 }
 
 func (u *UserProfileAction) GetMyProfileViaSidebar(ctx context.Context, tab ProfileTab) (*UserProfileResponse, error) {
@@ -168,7 +144,7 @@ func (u *UserProfileAction) GetMyProfileViaSidebar(ctx context.Context, tab Prof
 		return nil, err
 	}
 
-	return u.extractUserProfileData(page, tab)
+	return u.extractUserProfileData(ctx, page, tab)
 }
 
 // selectTab 切到目标子 tab。「笔记」是默认 tab，无需点击。

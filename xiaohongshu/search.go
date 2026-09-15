@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -14,12 +13,6 @@ import (
 	"github.com/xpzouying/xiaohongshu-mcp/errors"
 	"github.com/xpzouying/xiaohongshu-mcp/humanize"
 )
-
-type SearchResult struct {
-	Search struct {
-		Feeds FeedsValue `json:"feeds"`
-	} `json:"search"`
-}
 
 // FilterOption 筛选选项结构体
 type FilterOption struct {
@@ -109,7 +102,10 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 	if err := navigateFrom(ctx, page, searchURL, urlExplore, navWaitStable); err != nil {
 		return nil, err
 	}
-	page.MustWait(`() => window.__INITIAL_STATE__ !== undefined`)
+	// 等结果集注水。超时不报错：后面读不到会返回 ErrNoFeeds，那条错误更准确。
+	if err := waitState(ctx, page, "search.feeds", 10*time.Second); err != nil {
+		logrus.Warnf("搜索结果状态未就绪，继续读取: %v", err)
+	}
 
 	if len(pending) > 0 {
 		// 悬停在筛选按钮上展开面板
@@ -141,19 +137,10 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 		waitFeedsChanged(page, before, 15*time.Second)
 	}
 
-	result := page.MustEval(`() => {
-		if (window.__INITIAL_STATE__ &&
-		    window.__INITIAL_STATE__.search &&
-		    window.__INITIAL_STATE__.search.feeds) {
-			const feeds = window.__INITIAL_STATE__.search.feeds;
-			const feedsData = feeds.value !== undefined ? feeds.value : feeds._value;
-			if (feedsData) {
-				return JSON.stringify(feedsData);
-			}
-		}
-		return "";
-	}`).String()
-
+	result, err := readStateJSON(page, "search.feeds")
+	if err != nil {
+		return nil, err
+	}
 	if result == "" {
 		return nil, errors.ErrNoFeeds
 	}
@@ -171,19 +158,22 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 	return notes, nil
 }
 
-// feedIDsJS 读当前结果集的 id 列表，用来判断数据有没有换一批。
-const feedIDsJS = `() => {
-	const f = window.__INITIAL_STATE__?.search?.feeds;
-	const v = f ? (f.value !== undefined ? f.value : f._value) : null;
-	return v ? v.map(x => x.id).join(",") : "";
-}`
-
+// readFeedIDs 读当前结果集的 id 列表，用来判断数据有没有换一批。
+// 读不到就当作「没换」，返回空串。
 func readFeedIDs(page *rod.Page) string {
-	res, err := page.Eval(feedIDsJS)
-	if err != nil {
+	var feeds []struct {
+		ID string `json:"id"`
+	}
+	ok, err := readState(page, "search.feeds", &feeds)
+	if err != nil || !ok {
 		return ""
 	}
-	return res.Value.Str()
+
+	ids := make([]string, 0, len(feeds))
+	for _, f := range feeds {
+		ids = append(ids, f.ID)
+	}
+	return strings.Join(ids, ",")
 }
 
 // waitFeedsChanged 等筛选后的数据到位。
@@ -256,11 +246,7 @@ func findFilterOption(page *rod.Page, pf pendingFilter) (*rod.Element, error) {
 
 func makeSearchURL(keyword string) string {
 
-	values := url.Values{}
-	values.Set("keyword", keyword)
-	values.Set("source", "web_explore_feed")
-
-	//https://www.xiaohongshu.com/search_result?keyword=%25E7%258E%258B%25E5%25AD%2590&source=web_search_result_notes
-	//https://www.xiaohongshu.com/search_result?keyword=%25E7%258E%258B%25E5%25AD%2590&source=web_explore_feed
-	return fmt.Sprintf("https://www.xiaohongshu.com/search_result?%s", values.Encode())
+	// https://www.xiaohongshu.com/search_result?keyword=...&source=web_search_result_notes
+	// https://www.xiaohongshu.com/search_result?keyword=...&source=web_explore_feed
+	return ActiveSite().SearchURL(keyword)
 }

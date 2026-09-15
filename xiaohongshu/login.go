@@ -2,7 +2,6 @@ package xiaohongshu
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -20,7 +19,7 @@ func NewLogin(page *rod.Page) *LoginAction {
 func (a *LoginAction) CheckLoginStatus(ctx context.Context) (bool, error) {
 	// 加超时保护：只是查登录态的快速检查，不应无限挂（登录扫码的等待在 Login/WaitForLogin 里）
 	pp := a.page.Context(ctx).Timeout(30 * time.Second)
-	pp.MustNavigate("https://www.xiaohongshu.com/explore").MustWaitLoad()
+	pp.MustNavigate(urlExplore).MustWaitLoad()
 
 	time.Sleep(1 * time.Second)
 
@@ -47,24 +46,24 @@ type CurrentUser struct {
 func (a *LoginAction) CurrentUser(ctx context.Context) (*CurrentUser, error) {
 	pp := a.page.Context(ctx).Timeout(10 * time.Second)
 
-	res, err := pp.Eval(`() => {
-		const u = window.__INITIAL_STATE__ && window.__INITIAL_STATE__.user;
-		const info = u && u.userInfo && u.userInfo.value !== undefined ? u.userInfo.value : (u && u.userInfo);
-		if (!info || info.guest) return "";
-		return JSON.stringify({nickname: info.nickname, userId: info.userId || info.user_id});
-	}`)
+	// userId 在不同部署下可能写作 user_id，两个都收。
+	var info struct {
+		Guest     bool   `json:"guest"`
+		Nickname  string `json:"nickname"`
+		UserID    string `json:"userId"`
+		UserIDAlt string `json:"user_id"`
+	}
+	ok, err := readState(pp, "user.userInfo", &info)
 	if err != nil {
 		return nil, errors.Wrap(err, "read current user state failed")
 	}
-
-	raw := res.Value.String()
-	if raw == "" {
+	if !ok || info.Guest {
 		return nil, errors.New("current user not found in page state")
 	}
 
-	var user CurrentUser
-	if err := json.Unmarshal([]byte(raw), &user); err != nil {
-		return nil, errors.Wrap(err, "unmarshal current user failed")
+	user := CurrentUser{Nickname: info.Nickname, UserID: info.UserID}
+	if user.UserID == "" {
+		user.UserID = info.UserIDAlt
 	}
 
 	return &user, nil
@@ -74,7 +73,7 @@ func (a *LoginAction) Login(ctx context.Context) error {
 	pp := a.page.Context(ctx)
 
 	// 导航到小红书首页，这会触发二维码弹窗
-	pp.MustNavigate("https://www.xiaohongshu.com/explore").MustWaitLoad()
+	pp.MustNavigate(urlExplore).MustWaitLoad()
 
 	time.Sleep(2 * time.Second)
 
@@ -91,7 +90,7 @@ func (a *LoginAction) FetchQrcodeImage(ctx context.Context) (string, bool, error
 	pp := a.page.Context(ctx)
 
 	// 导航到小红书首页，这会触发二维码弹窗
-	pp.MustNavigate("https://www.xiaohongshu.com/explore").MustWaitLoad()
+	pp.MustNavigate(urlExplore).MustWaitLoad()
 
 	time.Sleep(2 * time.Second)
 

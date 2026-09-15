@@ -2,7 +2,6 @@ package xiaohongshu
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -107,23 +106,13 @@ func (n *NotificationAction) UnreadCount(ctx context.Context) (*NotificationCoun
 		logrus.Warnf("explore 页未稳定，继续读取未读数: %v", err)
 	}
 
-	res, err := page.Eval(`() => {
-		const s = window.__INITIAL_STATE__;
-		const c = s && s.notification && s.notification.notificationCount;
-		return c ? JSON.stringify(c) : "";
-	}`)
+	var count rawCount
+	ok, err := readState(page, "notification.notificationCount", &count)
 	if err != nil {
 		return nil, fmt.Errorf("读取未读数失败: %w", err)
 	}
-
-	raw := res.Value.String()
-	if raw == "" {
+	if !ok {
 		return nil, fmt.Errorf("页面状态里没有未读数，可能未登录或页面结构已变化")
-	}
-
-	var count rawCount
-	if err := json.Unmarshal([]byte(raw), &count); err != nil {
-		return nil, fmt.Errorf("解析未读数失败: %w", err)
 	}
 	return &NotificationCount{
 		Mentions:    count.Mentions,
@@ -294,23 +283,13 @@ func (r rawNotification) from() rawUser {
 
 // readTab 读取指定分区的原始数据，字段映射由结构体承担。
 func (n *NotificationAction) readTab(page *rod.Page, tab NotificationTab) (*notificationPayload, error) {
-	res, err := page.Eval(`(tab) => {
-		const s = window.__INITIAL_STATE__;
-		const m = s && s.notification && s.notification.notificationMap;
-		return m && m[tab] ? JSON.stringify(m[tab]) : "";
-	}`, string(tab))
+	var payload notificationPayload
+	ok, err := readState(page, "notification.notificationMap."+string(tab), &payload)
 	if err != nil {
 		return nil, fmt.Errorf("读取通知列表失败: %w", err)
 	}
-
-	raw := res.Value.String()
-	if raw == "" {
+	if !ok {
 		return nil, fmt.Errorf("页面状态里没有分区 %s，可能未登录或页面结构已变化", tab)
-	}
-
-	var payload notificationPayload
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return nil, fmt.Errorf("解析通知列表失败: %w", err)
 	}
 	return &payload, nil
 }

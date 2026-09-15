@@ -4,21 +4,6 @@ import "encoding/json"
 
 // 小红书 Feed 相关的数据结构定义
 
-// FeedResponse 表示从 __INITIAL_STATE__ 中获取的完整 Feed 响应
-type FeedResponse struct {
-	Feed FeedData `json:"feed"`
-}
-
-// FeedData 表示 feed 数据结构
-type FeedData struct {
-	Feeds FeedsValue `json:"feeds"`
-}
-
-// FeedsValue 表示 feeds 的值结构
-type FeedsValue struct {
-	Value []Feed `json:"_value"`
-}
-
 // Feed 表示单个 Feed 项目
 type Feed struct {
 	XsecToken string   `json:"xsecToken"`
@@ -273,14 +258,6 @@ type UserProfileResponse struct {
 	UserBasicInfo UserBasicInfo      `json:"userBasicInfo"`
 	Interactions  []UserInteractions `json:"interactions"`
 	Feeds         []Feed             `json:"feeds"`
-}
-
-// UserPageData 用户的详细信息
-type UserPageData struct {
-	RawValue struct {
-		Interactions []UserInteractions `json:"interactions"`
-		BasicInfo    UserBasicInfo      `json:"basicInfo"`
-	} `json:"_rawValue"`
 }
 
 // UserBasicInfo 用户的基本信息
