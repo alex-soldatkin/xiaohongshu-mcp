@@ -1,7 +1,6 @@
 package humanize
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -158,38 +157,4 @@ func ClickAt(page *rod.Page, pt proto.Point) error {
 		return err
 	}
 	return pressAndRelease(page.Mouse)
-}
-
-func Type(ctx context.Context, elem *rod.Element, text string) error {
-	dist := defaultProvider.Timing()[Keystroke]
-
-	if err := elem.Focus(); err != nil {
-		return err
-	}
-	if err := elem.WaitEnabled(); err != nil {
-		return err
-	}
-	if err := elem.WaitWritable(); err != nil {
-		return err
-	}
-
-	page := elem.Page().Context(ctx)
-
-	for _, r := range text {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := page.InsertText(string(r)); err != nil {
-			return err
-		}
-
-		t := time.NewTimer(dist.Sample())
-		select {
-		case <-t.C:
-		case <-ctx.Done():
-			t.Stop()
-			return ctx.Err()
-		}
-	}
-	return nil
 }
