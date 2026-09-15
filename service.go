@@ -151,6 +151,9 @@ type PublishRequest struct {
 	IsOriginal bool     `json:"is_original,omitempty"` // 是否声明原创
 	Visibility string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
 	Products   []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
+
+	// SaveAsDraft 保存到草稿箱而不是发布，不产生任何对外可见的内容（issue #19）。
+	SaveAsDraft bool `json:"save_as_draft,omitempty"`
 }
 
 // LoginStatusResponse 登录状态响应
@@ -184,6 +187,9 @@ type PublishVideoRequest struct {
 	ScheduleAt string   `json:"schedule_at,omitempty"` // 定时发布时间，ISO8601格式，为空则立即发布
 	Visibility string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
 	Products   []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
+
+	// SaveAsDraft 见 PublishRequest.SaveAsDraft（issue #19）。
+	SaveAsDraft bool `json:"save_as_draft,omitempty"`
 }
 
 // PublishVideoResponse 发布视频响应
@@ -438,10 +444,11 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 		IsOriginal:   req.IsOriginal,
 		Visibility:   req.Visibility,
 		Products:     req.Products,
+		SaveAsDraft:  req.SaveAsDraft,
 	}
 
 	if err := s.publishContent(ctx, content); err != nil {
-		logrus.Errorf("发布内容失败: title=%s %v", content.Title, err)
+		logrus.Errorf("发布内容失败: title=%s draft=%v %v", content.Title, content.SaveAsDraft, err)
 		return nil, err
 	}
 
@@ -449,7 +456,7 @@ func (s *XiaohongshuService) PublishContent(ctx context.Context, req *PublishReq
 		Title:   req.Title,
 		Content: req.Content,
 		Images:  len(imagePaths),
-		Status:  "发布完成",
+		Status:  publishStatusText(req.SaveAsDraft),
 	}
 
 	return response, nil
@@ -461,13 +468,32 @@ func (s *XiaohongshuService) processImages(images []string) ([]string, error) {
 	return processor.ProcessImages(images)
 }
 
+// publishStatusText 区分两种终止动作的回执文案（issue #19）。
+func publishStatusText(saveAsDraft bool) string {
+	if saveAsDraft {
+		return "已存草稿"
+	}
+	return "发布完成"
+}
+
+// publishClass 决定这次动作记在哪个预算上（issue #19）。
+//
+// 草稿不是发布：它不产生任何对外可见的内容，所以不该吃掉每天 5 次的发布额度。
+// 但它是对创作平台的真实写入流量，一样要被限速，所以归为 write。
+func publishClass(saveAsDraft bool) pacing.Class {
+	if saveAsDraft {
+		return pacing.ClassWrite
+	}
+	return pacing.ClassPublish
+}
+
 // publishContent 执行内容发布
 func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohongshu.PublishImageContent) error {
 	// Every tab of the account's own profile can change: a publish that fails
 	// late may still have left a draft or a published note behind.
 	s.cache.invalidate(ctx, store.KindMyProfile)
 
-	return s.run(ctx, pacing.ClassPublish, func(page *rod.Page) error {
+	return s.run(ctx, publishClass(content.SaveAsDraft), func(page *rod.Page) error {
 		action, err := xiaohongshu.NewPublishImageAction(page)
 		if err != nil {
 			return err
@@ -525,6 +551,7 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 		ScheduleTime: scheduleTime,
 		Visibility:   req.Visibility,
 		Products:     req.Products,
+		SaveAsDraft:  req.SaveAsDraft,
 	}
 
 	if err := s.publishVideo(ctx, content); err != nil {
@@ -535,7 +562,7 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 		Title:   req.Title,
 		Content: req.Content,
 		Video:   req.Video,
-		Status:  "发布完成",
+		Status:  publishStatusText(req.SaveAsDraft),
 	}
 	return resp, nil
 }
@@ -544,7 +571,7 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 func (s *XiaohongshuService) publishVideo(ctx context.Context, content xiaohongshu.PublishVideoContent) error {
 	s.cache.invalidate(ctx, store.KindMyProfile)
 
-	return s.run(ctx, pacing.ClassPublish, func(page *rod.Page) error {
+	return s.run(ctx, publishClass(content.SaveAsDraft), func(page *rod.Page) error {
 		action, err := xiaohongshu.NewPublishVideoAction(page)
 		if err != nil {
 			return err

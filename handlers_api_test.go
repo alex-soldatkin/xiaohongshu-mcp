@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xpzouying/xiaohongshu-mcp/pkg/pacing"
 )
 
 // respondError 是全仓库共用的错误出口。分级只是一行 if，改回去编译和其他单测
@@ -39,5 +41,43 @@ func TestRespondErrorLogLevel(t *testing.T) {
 			require.Len(t, hook.Entries, 1)
 			assert.Equal(t, tt.wantLevel, hook.LastEntry().Level)
 		})
+	}
+}
+
+// Draft mode (issue #19) is a classification decision as much as a UI one: a
+// draft is real traffic to the creator host, so it must be paced, but it
+// creates nothing visible, so it must not spend the scarce publish budget.
+func TestPublishClassAndStatus(t *testing.T) {
+	if got := publishClass(false); got != pacing.ClassPublish {
+		t.Fatalf("publish should be classed as publish, got %q", got)
+	}
+	if got := publishClass(true); got != pacing.ClassWrite {
+		t.Fatalf("draft should be classed as write, got %q", got)
+	}
+	if got := publishStatusText(true); got != "已存草稿" {
+		t.Fatalf("draft status text = %q", got)
+	}
+	if got := publishStatusText(false); got != "发布完成" {
+		t.Fatalf("publish status text = %q", got)
+	}
+}
+
+// The HTTP API must accept save_as_draft on the publish body, or the mode is
+// reachable from MCP only.
+func TestPublishRequestBindsSaveAsDraft(t *testing.T) {
+	var req PublishRequest
+	if err := json.Unmarshal([]byte(`{"title":"t","content":"c","images":["a.png"],"save_as_draft":true}`), &req); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !req.SaveAsDraft {
+		t.Fatal("save_as_draft did not bind on PublishRequest")
+	}
+
+	var vreq PublishVideoRequest
+	if err := json.Unmarshal([]byte(`{"title":"t","content":"c","video":"v.mp4","save_as_draft":true}`), &vreq); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !vreq.SaveAsDraft {
+		t.Fatal("save_as_draft did not bind on PublishVideoRequest")
 	}
 }

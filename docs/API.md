@@ -202,6 +202,7 @@ Content-Type: application/json
 - `is_original` (boolean, optional): 是否声明原创，`true` 为声明原创，不填则不声明
 - `visibility` (string, optional): 可见范围，支持: `公开可见`(默认)、`仅自己可见`、`仅互关好友可见`。不填则默认公开可见
 - `products` (array, optional): 商品关键词列表，用于绑定带货商品。填写商品名称或商品ID，自动搜索并选择第一个匹配结果，需账号已开通商品功能
+- `save_as_draft` (boolean, optional): 存草稿而不发布。`true` 时走完同一套表单，最后点存草稿按钮（海外站 rednote 的文案是"暂存离开"），笔记进入创作者中心的草稿箱，不对外可见、可随时删除；此时 `status` 返回 `已存草稿`。默认 `false` 直接发布
 
 **响应**
 ```json
@@ -246,6 +247,7 @@ Content-Type: application/json
 - `schedule_at` (string, optional): 定时发布时间，ISO8601 格式如 `2024-01-20T10:30:00+08:00`，支持1小时至14天内。不填则立即发布
 - `visibility` (string, optional): 可见范围，支持: `公开可见`(默认)、`仅自己可见`、`仅互关好友可见`。不填则默认公开可见
 - `products` (array, optional): 商品关键词列表，用于绑定带货商品。填写商品名称或商品ID，自动搜索并选择第一个匹配结果，需账号已开通商品功能
+- `save_as_draft` (boolean, optional): 存草稿而不发布。`true` 时走完同一套表单，最后点存草稿按钮（海外站 rednote 的文案是"暂存离开"），笔记进入创作者中心的草稿箱，不对外可见、可随时删除；此时 `status` 返回 `已存草稿`。默认 `false` 直接发布
 
 **响应**
 ```json

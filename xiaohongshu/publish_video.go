@@ -21,6 +21,9 @@ type PublishVideoContent struct {
 	ScheduleTime *time.Time // 定时发布时间，nil 表示立即发布
 	Visibility   string     // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
 	Products     []string   // 商品关键词列表，用于绑定带货商品
+
+	// SaveAsDraft 见 PublishImageContent.SaveAsDraft（issue #19）。
+	SaveAsDraft bool
 }
 
 // NewPublishVideoAction 进入发布页并切换到"上传视频"
@@ -56,7 +59,10 @@ func NewPublishVideoAction(page *rod.Page) (*PublishAction, error) {
 
 	time.Sleep(1 * time.Second)
 
-	return &PublishAction{page: pp}, nil
+	count, known := readDraftCount(pp)
+	slog.Info("进入发布页", "draft_count", count, "count_readable", known)
+
+	return &PublishAction{page: pp, draftCount: count, draftCountKnown: known}, nil
 }
 
 // PublishVideo 上传视频并提交
@@ -72,7 +78,10 @@ func (p *PublishAction) PublishVideo(ctx context.Context, content PublishVideoCo
 		return errors.Wrap(err, "小红书上传视频失败")
 	}
 
-	if err := submitPublishVideo(ctx, page, content.Title, content.Content, content.Tags, content.ScheduleTime, content.Visibility, content.Products); err != nil {
+	if err := p.submitPublishVideo(ctx, page, content); err != nil {
+		if content.SaveAsDraft {
+			return errors.Wrap(err, "小红书存草稿失败")
+		}
 		return errors.Wrap(err, "小红书发布失败")
 	}
 	return nil
@@ -108,14 +117,14 @@ func uploadVideo(page *rod.Page, videoPath string) error {
 	return nil
 }
 
-// submitPublishVideo 填写标题、正文、标签并点击发布（等待按钮可点击后再提交）
-func submitPublishVideo(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, visibility string, products []string) error {
+// submitPublishVideo 填写标题、正文、标签后执行终止动作：发布，或存草稿（issue #19）。
+func (p *PublishAction) submitPublishVideo(ctx context.Context, page *rod.Page, c PublishVideoContent) error {
 	// 标题
 	titleElem, err := page.Element("div.d-input input")
 	if err != nil {
 		return errors.Wrap(err, "查找标题输入框失败")
 	}
-	if err := humanize.Type(ctx, titleElem, title); err != nil {
+	if err := humanize.Type(ctx, titleElem, c.Title); err != nil {
 		return errors.Wrap(err, "输入标题失败")
 	}
 	humanize.Delay(ctx, humanize.AfterType)
@@ -125,34 +134,39 @@ func submitPublishVideo(ctx context.Context, page *rod.Page, title, content stri
 	if err != nil {
 		return err
 	}
-	if err := humanize.Type(ctx, contentElem, content); err != nil {
+	if err := humanize.Type(ctx, contentElem, c.Content); err != nil {
 		return errors.Wrap(err, "输入正文失败")
 	}
 	if err := waitAndClickTitleInput(titleElem); err != nil {
 		return err
 	}
-	if err := inputTags(ctx, contentElem, tags); err != nil {
+	if err := inputTags(ctx, contentElem, c.Tags); err != nil {
 		return err
 	}
 
 	humanize.Delay(ctx, humanize.AfterType)
 
 	// 处理定时发布
-	if scheduleTime != nil {
-		if err := setSchedulePublish(ctx, page, *scheduleTime); err != nil {
+	if c.ScheduleTime != nil {
+		if err := setSchedulePublish(ctx, page, *c.ScheduleTime); err != nil {
 			return errors.Wrap(err, "设置定时发布失败")
 		}
-		slog.Info("定时发布设置完成", "schedule_time", scheduleTime.Format("2006-01-02 15:04"))
+		slog.Info("定时发布设置完成", "schedule_time", c.ScheduleTime.Format("2006-01-02 15:04"))
 	}
 
 	// 设置可见范围
-	if err := setVisibility(page, visibility); err != nil {
+	if err := setVisibility(page, c.Visibility); err != nil {
 		return errors.Wrap(err, "设置可见范围失败")
 	}
 
 	// 绑定商品
-	if err := bindProducts(ctx, page, products); err != nil {
+	if err := bindProducts(ctx, page, c.Products); err != nil {
 		return errors.Wrap(err, "绑定商品失败")
+	}
+
+	// 终止动作二选一，同图文（issue #19）。
+	if c.SaveAsDraft {
+		return saveDraft(page, p.draftCount, p.draftCountKnown)
 	}
 
 	if err := clickPublishButton(page); err != nil {

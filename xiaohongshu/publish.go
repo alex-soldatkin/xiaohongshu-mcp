@@ -27,10 +27,21 @@ type PublishImageContent struct {
 	IsOriginal   bool       // 是否声明原创
 	Visibility   string     // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
 	Products     []string   // 商品关键词列表，用于绑定带货商品
+
+	// SaveAsDraft stops one step short of 发布 and clicks 存草稿 instead, so
+	// the note lands in the creator's 草稿箱 and nothing becomes visible to
+	// anyone. Everything before the last click is identical (issue #19).
+	SaveAsDraft bool
 }
 
 type PublishAction struct {
 	page *rod.Page
+
+	// draftCount 是进入发布页时读到的草稿箱数量，draftCountKnown 区分"0 篇"和
+	// "这一页没有计数器"。上传后表单会顶掉带计数器的头部，所以必须在这里读一次
+	// 带走，存草稿的成功校验要用它（issue #19）。
+	draftCount      int
+	draftCountKnown bool
 }
 
 // urlOfPublic 创作者中心的发布页。与 navigate.go 的落地页一样是 var：
@@ -74,8 +85,13 @@ func NewPublishImageAction(page *rod.Page) (*PublishAction, error) {
 
 	time.Sleep(1 * time.Second)
 
+	count, known := readDraftCount(pp)
+	slog.Info("进入发布页", "draft_count", count, "count_readable", known)
+
 	return &PublishAction{
-		page: pp,
+		page:            pp,
+		draftCount:      count,
+		draftCountKnown: known,
 	}, nil
 }
 
@@ -91,15 +107,17 @@ func (p *PublishAction) Publish(ctx context.Context, content PublishImageContent
 		return errors.Wrap(err, "小红书上传图片失败")
 	}
 
-	tags := content.Tags
-	if len(tags) >= 10 {
+	if len(content.Tags) >= 10 {
 		logrus.Warnf("标签数量超过10，截取前10个标签")
-		tags = tags[:10]
+		content.Tags = content.Tags[:10]
 	}
 
-	logrus.Infof("发布内容: title=%s, images=%v, tags=%v, schedule=%v, original=%v, visibility=%s, products=%v", content.Title, len(content.ImagePaths), tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products)
+	logrus.Infof("发布内容: title=%s, images=%v, tags=%v, schedule=%v, original=%v, visibility=%s, products=%v, draft=%v", content.Title, len(content.ImagePaths), content.Tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products, content.SaveAsDraft)
 
-	if err := submitPublish(ctx, page, content.Title, content.Content, tags, content.ScheduleTime, content.IsOriginal, content.Visibility, content.Products); err != nil {
+	if err := p.submitPublish(ctx, page, content); err != nil {
+		if content.SaveAsDraft {
+			return errors.Wrap(err, "小红书存草稿失败")
+		}
 		return errors.Wrap(err, "小红书发布失败")
 	}
 
@@ -350,12 +368,13 @@ func waitForUploadComplete(page *rod.Page, expectedCount int) error {
 	return errors.Errorf("第%d张图片上传超时(60s)，请检查网络连接和图片大小", expectedCount)
 }
 
-func submitPublish(ctx context.Context, page *rod.Page, title, content string, tags []string, scheduleTime *time.Time, isOriginal bool, visibility string, products []string) error {
+// submitPublish 走完发布表单并执行终止动作：发布，或存草稿（issue #19）。
+func (p *PublishAction) submitPublish(ctx context.Context, page *rod.Page, c PublishImageContent) error {
 	titleElem, err := page.Element("div.d-input input")
 	if err != nil {
 		return errors.Wrap(err, "查找标题输入框失败")
 	}
-	if err := humanize.Type(ctx, titleElem, title); err != nil {
+	if err := humanize.Type(ctx, titleElem, c.Title); err != nil {
 		return errors.Wrap(err, "输入标题失败")
 	}
 
@@ -371,13 +390,13 @@ func submitPublish(ctx context.Context, page *rod.Page, title, content string, t
 	if err != nil {
 		return err
 	}
-	if err := humanize.Type(ctx, contentElem, content); err != nil {
+	if err := humanize.Type(ctx, contentElem, c.Content); err != nil {
 		return errors.Wrap(err, "输入正文失败")
 	}
 	if err := waitAndClickTitleInput(titleElem); err != nil {
 		return err
 	}
-	if err := inputTags(ctx, contentElem, tags); err != nil {
+	if err := inputTags(ctx, contentElem, c.Tags); err != nil {
 		return err
 	}
 
@@ -388,27 +407,32 @@ func submitPublish(ctx context.Context, page *rod.Page, title, content string, t
 	}
 	slog.Info("检查正文长度：通过")
 
-	if scheduleTime != nil {
-		if err := setSchedulePublish(ctx, page, *scheduleTime); err != nil {
+	if c.ScheduleTime != nil {
+		if err := setSchedulePublish(ctx, page, *c.ScheduleTime); err != nil {
 			return errors.Wrap(err, "设置定时发布失败")
 		}
-		slog.Info("定时发布设置完成", "schedule_time", scheduleTime.Format("2006-01-02 15:04"))
+		slog.Info("定时发布设置完成", "schedule_time", c.ScheduleTime.Format("2006-01-02 15:04"))
 	}
 
-	if err := setVisibility(page, visibility); err != nil {
+	if err := setVisibility(page, c.Visibility); err != nil {
 		return errors.Wrap(err, "设置可见范围失败")
 	}
 
 	// 处理原创声明：显式请求了原创但设置失败 → 报错中止，不静默发成非原创（避免"以为原创其实不是"）
-	if isOriginal {
+	if c.IsOriginal {
 		if err := setOriginal(page); err != nil {
 			return errors.Wrap(err, "设置原创声明失败（已请求原创，中止发布）")
 		}
 		slog.Info("已声明原创")
 	}
 
-	if err := bindProducts(ctx, page, products); err != nil {
+	if err := bindProducts(ctx, page, c.Products); err != nil {
 		return errors.Wrap(err, "绑定商品失败")
+	}
+
+	// 终止动作二选一：存草稿只进草稿箱，不产生任何对外可见的内容（issue #19）。
+	if c.SaveAsDraft {
+		return saveDraft(page, p.draftCount, p.draftCountKnown)
 	}
 
 	if err := clickPublishButton(page); err != nil {

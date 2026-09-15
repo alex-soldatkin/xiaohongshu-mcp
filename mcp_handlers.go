@@ -154,18 +154,20 @@ func (s *AppServer) handlePublishContent(ctx context.Context, args map[string]in
 	visibility := parseVisibility(args)
 
 	isOriginal, _ := args["is_original"].(bool)
+	saveAsDraft, _ := args["save_as_draft"].(bool)
 
-	logrus.Infof("MCP: 发布内容 - 标题: %s, 图片数量: %d, 标签数量: %d, 定时: %s, 原创: %v, visibility: %s, 商品: %v", title, len(imagePaths), len(tags), scheduleAt, isOriginal, visibility, products)
+	logrus.Infof("MCP: 发布内容 - 标题: %s, 图片数量: %d, 标签数量: %d, 定时: %s, 原创: %v, visibility: %s, 商品: %v, 存草稿: %v", title, len(imagePaths), len(tags), scheduleAt, isOriginal, visibility, products, saveAsDraft)
 
 	req := &PublishRequest{
-		Title:      title,
-		Content:    content,
-		Images:     imagePaths,
-		Tags:       tags,
-		ScheduleAt: scheduleAt,
-		IsOriginal: isOriginal,
-		Visibility: visibility,
-		Products:   products,
+		Title:       title,
+		Content:     content,
+		Images:      imagePaths,
+		Tags:        tags,
+		ScheduleAt:  scheduleAt,
+		IsOriginal:  isOriginal,
+		Visibility:  visibility,
+		Products:    products,
+		SaveAsDraft: saveAsDraft,
 	}
 
 	result, err := s.xiaohongshuService.PublishContent(ctx, req)
@@ -179,7 +181,11 @@ func (s *AppServer) handlePublishContent(ctx context.Context, args map[string]in
 		}
 	}
 
-	resultText := fmt.Sprintf("内容发布成功: %+v", result)
+	action := "内容发布成功"
+	if saveAsDraft {
+		action = "已存入草稿箱（未发布）"
+	}
+	resultText := fmt.Sprintf("%s: %+v", action, result)
 	return &MCPToolResult{
 		Content: []MCPContent{{
 			Type: "text",
@@ -224,17 +230,19 @@ func (s *AppServer) handlePublishVideo(ctx context.Context, args map[string]inte
 
 	scheduleAt, _ := args["schedule_at"].(string)
 	visibility := parseVisibility(args)
+	saveAsDraft, _ := args["save_as_draft"].(bool)
 
-	logrus.Infof("MCP: 发布视频 - 标题: %s, 标签数量: %d, 定时: %s, visibility: %s, 商品: %v", title, len(tags), scheduleAt, visibility, products)
+	logrus.Infof("MCP: 发布视频 - 标题: %s, 标签数量: %d, 定时: %s, visibility: %s, 商品: %v, 存草稿: %v", title, len(tags), scheduleAt, visibility, products, saveAsDraft)
 
 	req := &PublishVideoRequest{
-		Title:      title,
-		Content:    content,
-		Video:      videoPath,
-		Tags:       tags,
-		ScheduleAt: scheduleAt,
-		Visibility: visibility,
-		Products:   products,
+		Title:       title,
+		Content:     content,
+		Video:       videoPath,
+		Tags:        tags,
+		ScheduleAt:  scheduleAt,
+		Visibility:  visibility,
+		Products:    products,
+		SaveAsDraft: saveAsDraft,
 	}
 
 	result, err := s.xiaohongshuService.PublishVideo(ctx, req)
@@ -248,7 +256,11 @@ func (s *AppServer) handlePublishVideo(ctx context.Context, args map[string]inte
 		}
 	}
 
-	resultText := fmt.Sprintf("视频发布成功: %+v", result)
+	action := "视频发布成功"
+	if saveAsDraft {
+		action = "视频已存入草稿箱（未发布）"
+	}
+	resultText := fmt.Sprintf("%s: %+v", action, result)
 	return &MCPToolResult{
 		Content: []MCPContent{{
 			Type: "text",
