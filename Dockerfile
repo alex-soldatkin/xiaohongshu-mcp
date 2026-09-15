@@ -89,20 +89,30 @@ RUN mkdir -p /app/data/home /app/data/config /app/images && \
 # 4. 下载并解压内置浏览器。构建阶段预置，运行时零下载。
 # 版本号唯一来源：browser/browser_version.txt（Go 也读它，避免两处漂移）。
 # 从自建 CDN 下载中性文件名，并校验 SHA256。
+# Trust anchor: browser/browser_sha256.txt, committed in this repository. The CDN
+# serves the archive and its SHA256SUMS from the same origin, so the CDN sums can
+# only prove transport integrity; the pinned digest is what is actually enforced,
+# and the CDN sums are kept as a secondary cross-check. Both files must be bumped
+# together — see docs/browser-version-bump.md.
 #
 # 解压位置必须与 Go 端 EnsureBrowser 找的缓存路径一致：
 # $XDG_CACHE_HOME/xiaohongshu-mcp/browser/<版本>/，这样运行时零下载、也不需要任何参数。
 # 注意 XDG_CACHE_HOME 指向 /app/cache 而非挂载卷内，否则预置的浏览器会被挂载盖掉。
 ENV XDG_CACHE_HOME=/app/cache
 COPY browser/browser_version.txt /tmp/browser_version.txt
+COPY browser/browser_sha256.txt /tmp/browser_sha256.txt
 RUN VER="$(cat /tmp/browser_version.txt | tr -d '[:space:]')" && \
     BASE="https://cdn.one-world.ai/browsers/${VER}" && \
     BROWSER_DIR="${XDG_CACHE_HOME}/xiaohongshu-mcp/browser/${VER}" && \
+    PINNED="$(grep -v '^[[:space:]]*#' /tmp/browser_sha256.txt | awk '$2 == "linux-x64.tar.xz" {print $1}')" && \
+    test -n "${PINNED}" || { echo "browser_sha256.txt 未固定 linux-x64.tar.xz 的哈希"; exit 1; } && \
     mkdir -p "${BROWSER_DIR}" && \
     curl -fsSL -o /tmp/browser.tar.xz "${BASE}/linux-x64.tar.xz" && \
-    curl -fsSL "${BASE}/SHA256SUMS" | grep " linux-x64.tar.xz$" | awk '{print $1"  /tmp/browser.tar.xz"}' | sha256sum -c - && \
+    echo "${PINNED}  /tmp/browser.tar.xz" | sha256sum -c - && \
+    CDN="$(curl -fsSL "${BASE}/SHA256SUMS" | awk '$2 == "linux-x64.tar.xz" {print $1}')" && \
+    test "${CDN}" = "${PINNED}" || { echo "CDN SHA256SUMS (${CDN}) 与仓库内固定值 (${PINNED}) 不一致"; exit 1; } && \
     tar -xJf /tmp/browser.tar.xz -C "${BROWSER_DIR}" --strip-components=1 && \
-    rm /tmp/browser.tar.xz /tmp/browser_version.txt && \
+    rm /tmp/browser.tar.xz /tmp/browser_version.txt /tmp/browser_sha256.txt && \
     test -x "${BROWSER_DIR}/chrome" && \
     chmod -R 755 /app/cache
 

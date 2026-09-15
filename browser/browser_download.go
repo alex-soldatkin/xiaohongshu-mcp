@@ -31,6 +31,36 @@ var browserVersionRaw string
 
 var browserVersion = strings.TrimSpace(browserVersionRaw)
 
+// browserSHA256Raw pins the expected SHA256 of every platform asset for the
+// version above. It is the trust anchor: the CDN serves both the archive and
+// its SHA256SUMS, so a checksum taken from there proves transport integrity
+// but says nothing about authenticity. A checksum committed in the repository
+// can only change through a reviewable diff.
+//
+//go:embed browser_sha256.txt
+var browserSHA256Raw string
+
+// pinnedSHA256 maps asset filename -> expected lowercase hex digest.
+var pinnedSHA256 = parsePinnedSHA256(browserSHA256Raw)
+
+// parsePinnedSHA256 reads sha256sum-style lines ("<hash>  <filename>"),
+// ignoring blank lines and '#' comments.
+func parsePinnedSHA256(raw string) map[string]string {
+	out := make(map[string]string)
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		out[fields[1]] = strings.ToLower(fields[0])
+	}
+	return out
+}
+
 func browserURL(name string) string {
 	return browserCDNBase + "/" + browserVersion + "/" + name
 }
@@ -125,28 +155,61 @@ func EnsureBrowser() (string, error) {
 	return bin, nil
 }
 
-// verifySHA256 下载同目录的 SHA256SUMS，校验 asset 的哈希。
+// verifySHA256 verifies the downloaded archive against two independent sources,
+// in order of trust:
+//
+//  1. the digest pinned in browser_sha256.txt, which ships with this source
+//     tree — a mismatch is fatal, and a missing pin is fatal too (fail closed);
+//  2. the CDN's SHA256SUMS, kept as a secondary check. It cannot add
+//     authenticity — it comes from the same origin as the payload — but it
+//     does catch a CDN whose archive and sums have drifted apart, which is a
+//     signal worth surfacing. Network failure here is only a warning: the
+//     pinned digest has already decided the question.
 func verifySHA256(archivePath, asset string) error {
-	want, err := fetchExpectedSHA(asset)
+	got, err := sha256File(archivePath)
 	if err != nil {
 		return err
 	}
-	f, err := os.Open(archivePath)
-	if err != nil {
-		return err
+
+	want, ok := pinnedSHA256[asset]
+	if !ok {
+		return fmt.Errorf("browser_sha256.txt 中未固定 %s 的哈希，拒绝使用未经校验的二进制", asset)
 	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return err
-	}
-	got := hex.EncodeToString(h.Sum(nil))
 	if !strings.EqualFold(got, want) {
-		return fmt.Errorf("%s SHA256 不匹配：期望 %s，实际 %s", asset, want, got)
+		return fmt.Errorf("%s SHA256 与仓库内固定值不匹配：期望 %s，实际 %s", asset, want, got)
+	}
+
+	cdn, err := fetchCDNSHA(asset)
+	if err != nil {
+		logrus.Warnf("无法获取 CDN SHA256SUMS 做二次核对（已通过仓库内固定值校验）: %v", err)
+		return nil
+	}
+	if !strings.EqualFold(cdn, want) {
+		return fmt.Errorf("CDN SHA256SUMS 与仓库内固定值不一致：CDN %s，固定值 %s。"+
+			"下载的文件与固定值相符，但分发点已发生变化，请人工核实后再升级版本", cdn, want)
 	}
 	return nil
 }
 
+// sha256File returns the lowercase hex SHA256 of the file at path.
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// fetchCDNSHA is indirected so tests can exercise the secondary check without
+// reaching the network.
+var fetchCDNSHA = fetchExpectedSHA
+
+// fetchExpectedSHA 下载同目录的 SHA256SUMS，取出 asset 的哈希。
 func fetchExpectedSHA(asset string) (string, error) {
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Get(browserURL("SHA256SUMS"))
 	if err != nil {

@@ -1,0 +1,14 @@
+# Pinned SHA256 for the bundled browser assets of the version in browser_version.txt.
+#
+# This file is the trust anchor. The CDN's own SHA256SUMS is only a secondary
+# check: an attacker who can serve a modified archive can serve a matching
+# SHA256SUMS next to it, so a checksum fetched from the same origin as the
+# payload proves transport integrity and nothing about authenticity. A checksum
+# committed here changes only through a reviewable git diff.
+#
+# Format: <sha256>  <asset filename>   (same layout as sha256sum output)
+# Bumping the version: see docs/browser-version-bump.md — both this file and
+# browser_version.txt must change in the same commit.
+a0a50ba07be7db22bd74dac79c23a9fc1f3b8cbf8a647cc2e04465ae176cdb77  linux-x64.tar.xz
+b72f091e2e1a7583eed389c4b8e3534ed355e568af8c8bbf8fc30a25e23ca679  macos-arm64.dmg
+5ae94143fa323167b7085242504e05dc8eeb6d96ca5feb80c887ade36f242b40  windows-x64.zip
