@@ -342,12 +342,14 @@ const probeJS = `async () => {
 // ---------------------------------------------------------------------------
 
 // launchProbeBrowser launches with the EXACT production option set from
-// buildOptions, optionally with extra flags merged on top.
+// buildOptions, plus any extra production Options the caller passes.
 //
-// WithExtraFlags replaces the whole map, and the last option applied wins, so
-// appending a merged map after buildOptions is the correct way to add a flag
-// without losing fingerprint-brand.
-func launchProbeBrowser(t *testing.T, extra map[string]string) *headless_browser.Browser {
+// Everything a probe varies has to travel as a browser.Option, so that what is
+// measured is the route production takes. That is not pedantry: the persistence
+// gate below used to pass the profile directory as a raw "user-data-dir" flag,
+// which reaches the command line but not the fork's keepUserDataDir guard, and
+// so measured a profile that Close() deletes.
+func launchProbeBrowser(t *testing.T, options ...Option) *headless_browser.Browser {
 	t.Helper()
 
 	bin, err := EnsureBrowser()
@@ -355,20 +357,12 @@ func launchProbeBrowser(t *testing.T, extra map[string]string) *headless_browser
 		t.Skipf("SKIP: bundled browser unavailable (set GOARCH=arm64 on an arm64 host): %v", err)
 	}
 
-	cfg := newConfig(true, WithFingerprintSeed(probeSeed))
+	cfg := newConfig(true, append([]Option{WithFingerprintSeed(probeSeed)}, options...)...)
 	cfg.binPath = bin
 	// Cookies deliberately not seeded: the probe must not depend on a logged-in
 	// session, and cookies do not touch any signal measured here.
 
-	opts := buildOptions(cfg)
-	if len(extra) > 0 {
-		flags := launchFlags(cfg)
-		for k, v := range extra {
-			flags[k] = v
-		}
-		opts = append(opts, headless_browser.WithExtraFlags(flags))
-	}
-	return headless_browser.New(opts...)
+	return headless_browser.New(buildOptions(cfg)...)
 }
 
 // probeServer serves the probe page from a fixed loopback origin. A fixed
@@ -631,7 +625,7 @@ func TestProbeBaseline(t *testing.T) {
 	url, stop := probeServer(t)
 	defer stop()
 
-	b := launchProbeBrowser(t, nil)
+	b := launchProbeBrowser(t)
 	defer b.Close()
 
 	page := openProbePage(t, b, url)
@@ -739,12 +733,16 @@ func TestProbeGeometryPerSeed(t *testing.T) {
 
 // TestProbeProfilePersistence is the acceptance gate for issue #6.
 //
-// KNOWN FAILING. It is expected to fail until a persistent profile lands.
-// headless_browser has no WithUserDataDir, and rod's launcher.Cleanup() does an
-// unconditional os.RemoveAll(UserDataDir) inside Browser.Close(), so the
-// profile written by run 1 is deleted before run 2 can open it. That is exactly
-// what #6 (and its dependency #12) is about. The failure is real and must not
-// be papered over: do not relax it, delete it when the fix lands.
+// It measures the claim the whole workstream rests on: a browser closed the way
+// production closes it leaves its profile on disk, and the next launch over the
+// same directory still has the localStorage the previous one wrote. XHS keeps
+// its b1 device blob there, so a profile wiped between actions means a
+// logged-in account whose browser has no local state, over and over.
+//
+// The directory travels through WithUserDataDir, which is the production route:
+// only that option sets the fork's keepUserDataDir guard. Passing it as a flag
+// instead is what made this test fail before the fix, and it failed for a
+// reason that looked like the dependency bug but was not.
 func TestProbeProfilePersistence(t *testing.T) {
 	url, stop := probeServer(t)
 	defer stop()
@@ -757,7 +755,7 @@ func TestProbeProfilePersistence(t *testing.T) {
 
 	// run 1: write a localStorage key, then close as production does.
 	func() {
-		b := launchProbeBrowser(t, map[string]string{"user-data-dir": dir})
+		b := launchProbeBrowser(t, WithUserDataDir(dir))
 		defer b.Close()
 
 		page := openProbePage(t, b, url)
@@ -772,9 +770,13 @@ func TestProbeProfilePersistence(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	profileSurvived := err == nil && len(entries) > 0
 	t.Logf("after run 1 Close(): profile dir exists with content = %v (readdir err: %v)", profileSurvived, err)
+	if !profileSurvived {
+		t.Fatalf("#6: the profile dir was removed by Close() (readdir err: %v); "+
+			"either WithUserDataDir was not used or the dependency fork is not in place", err)
+	}
 
 	// run 2: same profile dir, same origin.
-	b := launchProbeBrowser(t, map[string]string{"user-data-dir": dir})
+	b := launchProbeBrowser(t, WithUserDataDir(dir))
 	defer b.Close()
 
 	page := openProbePage(t, b, url)
@@ -788,9 +790,7 @@ func TestProbeProfilePersistence(t *testing.T) {
 	})
 
 	if got != want {
-		t.Errorf("KNOWN FAILING acceptance gate for #6: localStorage did not survive the relaunch; "+
-			"run 2 read %q, want %q. Cause: headless_browser has no WithUserDataDir and "+
-			"rod launcher.Cleanup() unconditionally removes the profile in Close().", got, want)
+		t.Errorf("#6: localStorage did not survive the relaunch; run 2 read %q, want %q", got, want)
 	}
 }
 
@@ -801,7 +801,7 @@ func TestProbeIMESetComposition(t *testing.T) {
 	url, stop := probeServer(t)
 	defer stop()
 
-	b := launchProbeBrowser(t, nil)
+	b := launchProbeBrowser(t)
 	defer b.Close()
 
 	page := openProbePage(t, b, url)
