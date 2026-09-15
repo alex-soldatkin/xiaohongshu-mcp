@@ -207,3 +207,35 @@ func TestBuildOptions_Pure(t *testing.T) {
 	assert.Equal(t, a, b)
 	assert.Equal(t, before, *cfg, "buildOptions 不得改动入参")
 }
+
+// TestWithUserDataDir pins the one thing about the persistent profile (#6) that
+// is easy to get wrong: the directory must travel as a headless_browser option,
+// never as a launch flag.
+//
+// Both routes put --user-data-dir on the command line, so both look like they
+// work. Only the option sets the fork's keepUserDataDir guard; via ExtraFlags,
+// Close() runs launcher.Cleanup() with the flag still set and deletes the
+// profile it was supposed to keep.
+func TestWithUserDataDir(t *testing.T) {
+	cfg := newConfig(true, WithUserDataDir("/data/profile"))
+
+	assert.Equal(t, "/data/profile", applyOptions(buildOptions(cfg)).UserDataDir)
+
+	_, ok := launchFlags(cfg)["user-data-dir"]
+	assert.False(t, ok, "the profile dir must not be passed as a launch flag")
+}
+
+// TestWithUserDataDir_Empty 未配置时不得出现在 option 里：空字符串会让 rod
+// 认为调用方指定了目录，反而关掉它自己的临时目录清理。
+func TestWithUserDataDir_Empty(t *testing.T) {
+	assert.Equal(t, "", applyOptions(buildOptions(newConfig(true))).UserDataDir)
+}
+
+// TestWithCookiesJSON: the manager decides per launch whether to seed, so the
+// jar has to be injectable rather than always read from disk.
+func TestWithCookiesJSON(t *testing.T) {
+	cfg := newConfig(true, WithCookiesJSON(`[{"name":"a"}]`))
+	assert.Equal(t, `[{"name":"a"}]`, applyOptions(buildOptions(cfg)).Cookies)
+
+	assert.Equal(t, "", applyOptions(buildOptions(newConfig(true))).Cookies)
+}

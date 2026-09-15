@@ -44,6 +44,16 @@ type browserConfig struct {
 	// cookiesJSON is the raw cookie jar to seed. Empty = seed nothing.
 	// Read from disk by the caller, again to keep buildOptions pure.
 	cookiesJSON string
+
+	// userDataDir is the persistent Chrome profile directory (issue #6).
+	// Empty = rod picks a temp dir and deletes it on Close.
+	//
+	// Deliberately NOT a launchFlags entry. The fork only sets its
+	// keepUserDataDir guard from headless_browser.WithUserDataDir, so a
+	// "user-data-dir" key routed through ExtraFlags would reach the launcher
+	// and then be deleted again by Cleanup() on Close — a profile that looks
+	// persistent and silently is not.
+	userDataDir string
 }
 
 type Option func(*browserConfig)
@@ -61,6 +71,27 @@ func WithProxy(proxy string) Option {
 func WithTimezone(tz string) Option {
 	return func(c *browserConfig) {
 		c.timezone = tz
+	}
+}
+
+// WithUserDataDir pins the Chrome profile directory, so localStorage, IndexedDB
+// and the live cookie jar survive a browser restart (issue #6). Empty keeps
+// rod's throwaway temp profile.
+//
+// This must stay a real headless_browser option rather than a launch flag; see
+// the browserConfig field comment.
+func WithUserDataDir(dir string) Option {
+	return func(c *browserConfig) {
+		c.userDataDir = dir
+	}
+}
+
+// WithCookiesJSON seeds the browser with a cookie jar snapshot. The manager
+// (issue #6) decides per launch whether to seed at all, so this cannot be read
+// from disk unconditionally the way NewBrowser does it.
+func WithCookiesJSON(raw string) Option {
+	return func(c *browserConfig) {
+		c.cookiesJSON = raw
 	}
 }
 
@@ -182,6 +213,12 @@ func buildOptions(cfg *browserConfig) []headless_browser.Option {
 		opts = append(opts, headless_browser.WithCookies(cfg.cookiesJSON))
 	}
 
+	// Persistent profile (#6). An option, never a flag: only this option sets
+	// the fork's keepUserDataDir guard that stops Close() deleting the dir.
+	if cfg.userDataDir != "" {
+		opts = append(opts, headless_browser.WithUserDataDir(cfg.userDataDir))
+	}
+
 	return opts
 }
 
@@ -218,32 +255,68 @@ func loadCookiesJSON() string {
 	return string(data)
 }
 
-// NewBrowser resolves the bundled binary, gathers the cookie jar and launches
-// with the option set from buildOptions. It is deliberately thin: everything
-// worth testing lives in launchFlags/buildOptions.
-func NewBrowser(headless bool, options ...Option) *headless_browser.Browser {
-	cfg := newConfig(headless, options...)
-
-	// 只用内置浏览器，没有别的来源。二进制必须显式传给 go-rod，
-	// 否则 rod 会自行下载一个默认 Chromium：它不是内置浏览器，也不认识下面
-	// 这些 flag（未知 flag 被静默忽略，日志照样打印 "fingerprint enabled"），
-	// 属于无声降级。宁可不启动，也不启动一个不对的浏览器。
-	binPath, err := EnsureBrowser()
-	if err != nil {
-		panic(fmt.Sprintf("内置浏览器不可用，拒绝启动: %v", err))
-	}
-	cfg.binPath = binPath
-	cfg.cookiesJSON = loadCookiesJSON()
-
+// logLaunch prints the launch parameters worth seeing in a bug report.
+func logLaunch(cfg *browserConfig) {
 	if cfg.proxy != "" {
 		logrus.Infof("Using proxy: %s", maskProxyCredentials(cfg.proxy))
 	}
 	if cfg.fingerprintSeed > 0 {
 		logrus.Infof("fingerprint seed pinned: %d", cfg.fingerprintSeed)
 	}
+	if cfg.userDataDir != "" {
+		logrus.Infof("browser profile: %s", cfg.userDataDir)
+	}
 	g := deriveGeometry(cfg.fingerprintSeed, resolvePlatform())
 	logrus.Infof("browser timezone: %s; window %dx%d on a %dx%d screen @%gx",
 		resolveTimezone(cfg), g.innerW, g.innerH, g.screenW, g.screenH, g.dpr)
+}
 
-	return headless_browser.New(buildOptions(cfg)...)
+// launch resolves the bundled binary and starts a browser from cfg, returning
+// an error instead of panicking.
+//
+// headless_browser.New is built out of MustLaunch/MustConnect/MustSetCookies,
+// so every failure mode — a held SingletonLock, a stale DevToolsActivePort, a
+// malformed cookie jar — arrives as a panic. A long-lived server must not die
+// because one launch failed, so they are recovered into errors here. This is
+// the single launch path; NewBrowser is a panicking wrapper over it.
+func launch(cfg *browserConfig) (b *headless_browser.Browser, err error) {
+	// 只用内置浏览器，没有别的来源。二进制必须显式传给 go-rod，
+	// 否则 rod 会自行下载一个默认 Chromium：它不是内置浏览器，也不认识下面
+	// 这些 flag（未知 flag 被静默忽略，日志照样打印 "fingerprint enabled"），
+	// 属于无声降级。宁可不启动，也不启动一个不对的浏览器。
+	binPath, binErr := EnsureBrowser()
+	if binErr != nil {
+		return nil, fmt.Errorf("内置浏览器不可用，拒绝启动: %w", binErr)
+	}
+	cfg.binPath = binPath
+
+	logLaunch(cfg)
+
+	defer func() {
+		if r := recover(); r != nil {
+			b = nil
+			err = fmt.Errorf("browser launch failed: %v", r)
+		}
+	}()
+
+	return headless_browser.New(buildOptions(cfg)...), nil
+}
+
+// NewBrowser gathers the cookie jar from disk and launches with the option set
+// from buildOptions. It is deliberately thin: everything worth testing lives in
+// launchFlags/buildOptions.
+//
+// It panics on failure, which is what its callers (one-shot CLIs and tests)
+// want. The long-lived server goes through Manager, which uses launch directly.
+func NewBrowser(headless bool, options ...Option) *headless_browser.Browser {
+	cfg := newConfig(headless, options...)
+	if cfg.cookiesJSON == "" {
+		cfg.cookiesJSON = loadCookiesJSON()
+	}
+
+	b, err := launch(cfg)
+	if err != nil {
+		panic(err.Error())
+	}
+	return b
 }
