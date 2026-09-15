@@ -30,22 +30,22 @@ func TestSeedPolicy(t *testing.T) {
 		{name: "A 首次运行：无 marker 无文件", wantSeed: false},
 		{name: "B 新 profile + 已有会话文件", savedAt: seededAt, hasCookies: true, wantSeed: true},
 		{
-			name: "C 稳态：marker 与文件同一时刻",
+			name:   "C 稳态：marker 与文件同一时刻",
 			marker: seedMarker{SeededFrom: seededAt}, hasMarker: true,
 			savedAt: seededAt, hasCookies: true, wantSeed: false,
 		},
 		{
-			name: "D 文件在别处被重写，比 marker 新",
+			name:   "D 文件在别处被重写，比 marker 新",
 			marker: seedMarker{SeededFrom: seededAt}, hasMarker: true,
 			savedAt: seededAt.Add(time.Hour), hasCookies: true, wantSeed: true,
 		},
 		{
-			name: "E 旧备份盖在活着的 profile 上",
+			name:   "E 旧备份盖在活着的 profile 上",
 			marker: seedMarker{SeededFrom: seededAt}, hasMarker: true,
 			savedAt: seededAt.Add(-time.Hour), hasCookies: true, wantSeed: false,
 		},
 		{
-			name: "F 文件被删，profile 仍登录着",
+			name:   "F 文件被删，profile 仍登录着",
 			marker: seedMarker{SeededFrom: seededAt}, hasMarker: true,
 			hasCookies: false, wantSeed: false,
 		},
