@@ -23,6 +23,7 @@ func main() {
 	b := browser.NewBrowser(false,
 		browser.WithFingerprintSeed(configs.ResolveFingerprintSeed(store)),
 		browser.WithProxy(configs.ProxyFromEnv()),
+		browser.WithTimezone(configs.TimezoneFromEnv()),
 	)
 	defer b.Close()
 

@@ -60,28 +60,72 @@ func applyOptions(opts []headless_browser.Option) *headless_browser.Config {
 // Chromium. This is the production flag set the probe harness measures, so a
 // change here invalidates the recorded baseline (issue #4).
 func TestLaunchFlags(t *testing.T) {
-	flags := launchFlags(newConfig(true))
+	cfg := newConfig(true)
+	flags := launchFlags(cfg)
 
 	assert.Equal(t, map[string]string{
 		"fingerprint-brand": "Chrome",
+		"timezone":          "Asia/Shanghai", // #2
+		"lang":              "zh-CN",         // #9
+		"accept-lang":       "zh-CN",         // #9
+		// #1, outer window only; screen.* and dpr come from the page hook.
+		"window-size": windowSizeFlag(deriveGeometry(cfg.fingerprintSeed, resolvePlatform())),
 	}, flags)
 
 	// Documented gaps, each owned by an open issue. Asserting their absence
 	// keeps the baseline honest: when one is added the test fails loudly and
 	// the probe must be re-run.
 	for _, absent := range []string{
-		"timezone",                        // #2
-		"lang",                            // #9
-		"accept-lang",                     // #9
-		"force-webrtc-ip-handling-policy", // #9
+		"force-webrtc-ip-handling-policy", // #9: measured 0 ICE candidates, nothing to suppress
 		"user-data-dir",                   // #6
-		"fingerprint-screen-width",        // #1
-		"fingerprint-screen-height",       // #1
-		"disable-blink-features",          // measured unnecessary, see #4
+		// #1 is fixed with Emulation.setDeviceMetricsOverride instead: these
+		// two were never tried and the CDP route is measured to work.
+		"fingerprint-screen-width",
+		"fingerprint-screen-height",
+		"disable-blink-features", // measured unnecessary, see #4
+		// Would replace rod's default value for the key rather than extend it.
+		"enable-features",
 	} {
 		_, ok := flags[absent]
 		assert.Falsef(t, ok, "flag %q unexpectedly present", absent)
 	}
+}
+
+// TestLaunchFlags_Timezone XHS_TIMEZONE 经 Option 传入时覆盖默认值；
+// 空值回落到 Asia/Shanghai，绝不回落到宿主机时区。
+func TestLaunchFlags_Timezone(t *testing.T) {
+	assert.Equal(t, "Europe/Berlin",
+		launchFlags(newConfig(true, WithTimezone("Europe/Berlin")))["timezone"])
+	assert.Equal(t, DefaultTimezone,
+		launchFlags(newConfig(true, WithTimezone("")))["timezone"])
+}
+
+// TestLaunchFlags_LocaleSingleSource lang/accept-lang 必须跟着 WithLanguage 走，
+// 不得各写各的：三处不一致本身就是破绽。
+func TestLaunchFlags_LocaleSingleSource(t *testing.T) {
+	flags := launchFlags(newConfig(true))
+	c := applyOptions(buildOptions(newConfig(true)))
+
+	assert.Equal(t, launchLanguage, c.Language)
+	assert.Equal(t, launchLanguage, flags["lang"])
+	assert.Equal(t, launchLanguage, flags["accept-lang"])
+}
+
+// TestLaunchFlags_WindowSizeFollowsSeed 窗口大小必须跟着 seed 走：
+// 写死常量等于所有账号共用同一台显示器。
+func TestLaunchFlags_WindowSizeFollowsSeed(t *testing.T) {
+	a := launchFlags(newConfig(true, WithFingerprintSeed(98759)))["window-size"]
+	b := launchFlags(newConfig(true, WithFingerprintSeed(98759)))["window-size"]
+	assert.Equal(t, a, b, "same seed must give the same window")
+
+	differs := false
+	for _, seed := range []int{1, 2, 3, 4, 5, 6, 7, 8} {
+		if launchFlags(newConfig(true, WithFingerprintSeed(seed)))["window-size"] != a {
+			differs = true
+			break
+		}
+	}
+	assert.True(t, differs, "window size does not vary across seeds")
 }
 
 // TestLaunchFlags_FreshMap 每次返回新 map：调用方（含测试）改动结果不得污染下一次启动。
@@ -106,7 +150,8 @@ func TestBuildOptions_Defaults(t *testing.T) {
 	assert.False(t, c.StealthJS, "CloakBrowser 下注入 stealth.js 反而制造矛盾")
 	assert.Equal(t, "zh-CN", c.Language)
 	assert.Equal(t, "", c.UserAgent, "不得强制 UA：会与 Client Hints 矛盾")
-	assert.Equal(t, map[string]string{"fingerprint-brand": "Chrome"}, c.ExtraFlags)
+	assert.Equal(t, launchFlags(newConfig(true)), c.ExtraFlags)
+	assert.NotNil(t, c.PageHook, "geometry and locale overrides must reach every page (#1, #9)")
 
 	assert.Equal(t, "", c.Proxy)
 	assert.Equal(t, 0, c.FingerprintSeed)
@@ -154,6 +199,11 @@ func TestBuildOptions_Pure(t *testing.T) {
 	a := applyOptions(buildOptions(cfg))
 	b := applyOptions(buildOptions(cfg))
 
+	// PageHook is a closure: two calls produce two distinct func values that
+	// reflect.DeepEqual can never match. Compare the geometry it carries
+	// instead — that is the part that has to be deterministic.
+	assert.Equal(t, deriveGeometry(42, resolvePlatform()), deriveGeometry(42, resolvePlatform()))
+	a.PageHook, b.PageHook = nil, nil
 	assert.Equal(t, a, b)
 	assert.Equal(t, before, *cfg, "buildOptions 不得改动入参")
 }

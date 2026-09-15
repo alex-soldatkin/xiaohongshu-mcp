@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/proto"
 	"github.com/sirupsen/logrus"
 	"github.com/xpzouying/headless_browser"
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
@@ -15,11 +17,22 @@ import (
 // (issue #9) have a single source of truth.
 const launchLanguage = "zh-CN"
 
+// DefaultTimezone is the zone used when none is configured (issue #2).
+//
+// Deliberately not the host zone: the target site is Chinese, the egress IP is
+// meant to be Chinese and navigator.languages says zh-CN, so a browser
+// reporting Europe/London is a one-line mismatch check. Docker already sets
+// ENV TZ=Asia/Shanghai, so the flag agrees with the container rather than
+// fighting it.
+const DefaultTimezone = "Asia/Shanghai"
+
 type browserConfig struct {
 	// fingerprintSeed 固定指纹 seed；>0 时钉死，同账号每次同一套指纹。0 = 每次随机。
 	fingerprintSeed int
 	// proxy 代理地址；非空时启用。
 	proxy string
+	// timezone is the IANA zone reported by Intl and Date. Empty = DefaultTimezone.
+	timezone string
 
 	// headless runs the browser without a window. Part of the config (rather
 	// than a NewBrowser argument threaded separately) so that buildOptions is
@@ -39,6 +52,15 @@ type Option func(*browserConfig)
 func WithProxy(proxy string) Option {
 	return func(c *browserConfig) {
 		c.proxy = proxy
+	}
+}
+
+// WithTimezone pins the browser timezone (IANA name, e.g. "Asia/Shanghai").
+// Empty falls back to DefaultTimezone — never to the host zone, which is the
+// leak issue #2 is about. Env parsing lives in configs, as with proxy and seed.
+func WithTimezone(tz string) Option {
+	return func(c *browserConfig) {
+		c.timezone = tz
 	}
 }
 
@@ -89,7 +111,38 @@ func launchFlags(cfg *browserConfig) map[string]string {
 	// 注：hardware-concurrency 不设，交给 seed 派生。
 	return map[string]string{
 		"fingerprint-brand": "Chrome",
+
+		// Timezone (#2). The bundled binary honours --timezone and it moves
+		// both Intl and Date together, which is what matters: spoofing that
+		// changes Intl while Date keeps the host offset is itself detectable.
+		// Do not combine with a per-page Emulation.setTimezoneOverride.
+		"timezone": resolveTimezone(cfg),
+
+		// ICU locale (#9). The CDP Accept-Language override reaches
+		// navigator.languages and the request header but not ICU, so
+		// Intl.DateTimeFormat().resolvedOptions().locale otherwise follows the
+		// host and contradicts navigator.language. Both derive from
+		// launchLanguage so there is one source of truth.
+		// Measured caveat: on macOS neither flag moves ICU — Chrome takes its
+		// default locale from the OS there — so the page hook also issues
+		// Emulation.setLocaleOverride, which does. The flags stay because they
+		// are what works on the Linux/Docker path.
+		"lang":        launchLanguage,
+		"accept-lang": launchLanguage,
+
+		// Window geometry (#1): outerWidth/outerHeight only. screen.* and
+		// devicePixelRatio come from the per-page CDP override below.
+		"window-size": windowSizeFlag(deriveGeometry(cfg.fingerprintSeed, resolvePlatform())),
 	}
+}
+
+// resolveTimezone returns the zone to launch with. Kept separate so the flag
+// builder stays a straight map literal.
+func resolveTimezone(cfg *browserConfig) string {
+	if cfg.timezone != "" {
+		return cfg.timezone
+	}
+	return DefaultTimezone
 }
 
 // buildOptions turns a browserConfig into the headless_browser option set.
@@ -106,6 +159,9 @@ func buildOptions(cfg *browserConfig) []headless_browser.Option {
 		headless_browser.WithStealthJS(false),
 		headless_browser.WithLanguage(launchLanguage), // 面向小红书
 		headless_browser.WithExtraFlags(launchFlags(cfg)),
+		// Per-page CDP setup: window metrics (#1) and ICU locale (#9), both of
+		// which no launch flag on this build can deliver on its own.
+		headless_browser.WithPageHook(pageSetupHook(cfg)),
 	}
 
 	if cfg.binPath != "" {
@@ -127,6 +183,25 @@ func buildOptions(cfg *browserConfig) []headless_browser.Option {
 	}
 
 	return opts
+}
+
+// pageSetupHook returns the per-page hook run on every page the browser opens.
+//
+// The geometry is computed once per config, so every page of a session reports
+// the same monitor rather than re-rolling it per tab.
+func pageSetupHook(cfg *browserConfig) func(*rod.Page) error {
+	g := deriveGeometry(cfg.fingerprintSeed, resolvePlatform())
+	return func(page *rod.Page) error {
+		if err := applyGeometry(page, g); err != nil {
+			return err
+		}
+		// ICU locale (#9). navigator.language says zh-CN while
+		// Intl.DateTimeFormat().resolvedOptions().locale otherwise reports the
+		// host's — en-GB on the machine this was measured on — and the two
+		// disagreeing is the tell. --lang does not move ICU on macOS; this
+		// does, on both platforms.
+		return proto.EmulationSetLocaleOverride{Locale: launchLanguage}.Call(page)
+	}
 }
 
 // loadCookiesJSON reads the cookie jar snapshot from disk. Returns "" when it
@@ -166,6 +241,9 @@ func NewBrowser(headless bool, options ...Option) *headless_browser.Browser {
 	if cfg.fingerprintSeed > 0 {
 		logrus.Infof("fingerprint seed pinned: %d", cfg.fingerprintSeed)
 	}
+	g := deriveGeometry(cfg.fingerprintSeed, resolvePlatform())
+	logrus.Infof("browser timezone: %s; window %dx%d on a %dx%d screen @%gx",
+		resolveTimezone(cfg), g.innerW, g.innerH, g.screenW, g.screenH, g.dpr)
 
 	return headless_browser.New(buildOptions(cfg)...)
 }

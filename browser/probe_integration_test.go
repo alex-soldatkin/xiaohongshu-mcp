@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -663,21 +664,76 @@ func TestProbeBaseline(t *testing.T) {
 		t.Errorf("window.chrome shims missing: loadTimes=%s csi=%s", res.ChromeLoadTimes, res.ChromeCsi)
 	}
 
-	// --- known-broken, tracked by their own issues --------------------------
-	// Logged rather than failed so this harness stays usable as a baseline
-	// recorder. Each becomes an assertion when its issue lands.
+	// --- fixed, now gated ---------------------------------------------------
+	// These were the known-broken lines of the original baseline. Each fix has
+	// landed and is measured, so they are assertions rather than log lines.
 	if !res.GeometrySane {
-		t.Logf("KNOWN BROKEN (#1): geometry impossible -- screen %dx%d, inner %dx%d, outer %dx%d, dpr %g",
+		t.Errorf("#1: geometry impossible -- screen %dx%d, inner %dx%d, outer %dx%d, dpr %g",
 			res.ScreenW, res.ScreenH, res.InnerW, res.InnerH, res.OuterW, res.OuterH, res.DPR)
 	}
+	if wantDPR := 2.0; runtime.GOOS == "darwin" && res.DPR != wantDPR {
+		t.Errorf("#1: devicePixelRatio = %g on a macOS fingerprint, want %g", res.DPR, wantDPR)
+	}
 	if res.TZ != "Asia/Shanghai" {
-		t.Logf("KNOWN BROKEN (#2): Intl timeZone = %q (host leak), offset %d min", res.TZ, res.TZOffset)
+		t.Errorf("#2: Intl timeZone = %q, want Asia/Shanghai", res.TZ)
 	}
-	if !strings.HasPrefix(res.ICULocale, "zh") {
-		t.Logf("KNOWN BROKEN (#9): ICU locale = %q while navigator.language = %q", res.ICULocale, res.Language)
+	// Intl and Date must agree: spoofing that moves one and not the other is
+	// itself the detection. Asia/Shanghai is UTC+8 with no DST, so -480 all year.
+	if res.TZOffset != -480 || res.TZOffsetJan != -480 || res.TZOffsetJul != -480 {
+		t.Errorf("#2: getTimezoneOffset = %d (jan %d, jul %d), want -480 everywhere for Asia/Shanghai",
+			res.TZOffset, res.TZOffsetJan, res.TZOffsetJul)
 	}
+	if res.ICULocale != res.Language {
+		t.Errorf("#9: ICU locale %q disagrees with navigator.language %q", res.ICULocale, res.Language)
+	}
+
+	// Still open, logged rather than failed.
 	if hasHostCandidate(res.WebRTC.IPs) {
-		t.Logf("KNOWN BROKEN (#9): WebRTC host candidates leaked: %v", res.WebRTC.IPs)
+		t.Logf("KNOWN (#9): WebRTC host candidates leaked: %v", res.WebRTC.IPs)
+	}
+	if res.AvailH == res.ScreenH {
+		t.Logf("KNOWN (#1, accepted): screen.availHeight == screen.height (%d); no flag or CDP call moves the work area on this build", res.AvailH)
+	}
+}
+
+// TestProbeGeometryPerSeed is the seed-stability half of issue #1: geometry is
+// part of the account's identity, so it must be identical across restarts of
+// the same account and different between accounts. A hard-coded window would
+// pass the sanity check above and still make every account look like the same
+// machine.
+func TestProbeGeometryPerSeed(t *testing.T) {
+	url, stop := probeServer(t)
+	defer stop()
+
+	measure := func(seed int) probeResult {
+		bin, err := EnsureBrowser()
+		if err != nil {
+			t.Skipf("SKIP: bundled browser unavailable: %v", err)
+		}
+		cfg := newConfig(true, WithFingerprintSeed(seed))
+		cfg.binPath = bin
+
+		b := headless_browser.New(buildOptions(cfg)...)
+		defer b.Close()
+		return runProbe(t, openProbePage(t, b, url))
+	}
+
+	type box struct{ sw, sh, iw, ih, ow, oh int }
+	of := func(r probeResult) box {
+		return box{r.ScreenW, r.ScreenH, r.InnerW, r.InnerH, r.OuterW, r.OuterH}
+	}
+
+	first := of(measure(probeSeed))
+	second := of(measure(probeSeed))
+	other := of(measure(probeSeed + 7919))
+
+	t.Logf("seed %d: %+v / relaunch %+v ; seed %d: %+v", probeSeed, first, second, probeSeed+7919, other)
+
+	if first != second {
+		t.Errorf("#1: same seed gave different geometry across launches: %+v vs %+v", first, second)
+	}
+	if first == other {
+		t.Errorf("#1: two different seeds share one geometry %+v", first)
 	}
 }
 

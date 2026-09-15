@@ -42,6 +42,8 @@ func main() {
 	configs.SetFingerprintSeed(configs.ResolveFingerprintSeed(
 		cookies.NewLoadCookie(cookies.GetCookiesFilePath())))
 	configs.SetProxy(configs.ProxyFromEnv())
+	// 时区独立于宿主机：默认 Asia/Shanghai，XHS_TIMEZONE 可覆盖（issue #2）。
+	configs.SetTimezone(configs.TimezoneFromEnv())
 
 	// 初始化服务
 	xiaohongshuService := NewXiaohongshuService()

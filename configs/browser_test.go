@@ -38,3 +38,29 @@ func TestProxyFromEnv(t *testing.T) {
 		assert.Equal(t, "socks5://127.0.0.1:1080", ProxyFromEnv())
 	})
 }
+
+// TestTimezoneFromEnv 校验 XHS_TIMEZONE 解析：未设或形状非法一律返回空串，
+// 由浏览器层套用 Asia/Shanghai，绝不回落到宿主机时区（issue #2）。
+func TestTimezoneFromEnv(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want string
+	}{
+		{name: "未设返回空", env: "", want: ""},
+		{name: "合法时区", env: "Asia/Shanghai", want: "Asia/Shanghai"},
+		{name: "两段以上", env: "America/Argentina/Salta", want: "America/Argentina/Salta"},
+		{name: "UTC", env: "UTC", want: "UTC"},
+		{name: "首尾空白被裁掉", env: "  Asia/Tokyo  ", want: "Asia/Tokyo"},
+		{name: "带空格非法", env: "Asia/Shang hai", want: ""},
+		{name: "注入字符非法", env: "Asia/Shanghai --foo", want: ""},
+		{name: "斜杠开头非法", env: "/Asia/Shanghai", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("XHS_TIMEZONE", tt.env)
+			assert.Equal(t, tt.want, TimezoneFromEnv())
+		})
+	}
+}
