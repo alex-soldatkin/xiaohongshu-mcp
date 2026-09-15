@@ -53,6 +53,28 @@ func respondServiceError(c *gin.Context, code, message string, err error) {
 		return
 	}
 
+	// Risk control is a 423 Locked: the account, not the request, is the thing
+	// that is unavailable. Distinct from the 429 above, which is our own local
+	// budget and carries a deadline we actually know.
+	if rc, ok := myerrors.AsRiskControl(err); ok {
+		details := map[string]any{
+			"kind":   rc.Kind,
+			"url":    rc.URL,
+			"detail": rc.Detail,
+		}
+		if rc.Screenshot != "" {
+			details["screenshot"] = rc.Screenshot
+		}
+		if rc.Cooldown > 0 {
+			retry := int(math.Ceil(rc.Cooldown.Seconds()))
+			c.Header("Retry-After", strconv.Itoa(retry))
+			details["retry_after"] = retry
+		}
+		respondError(c, http.StatusLocked, "RISK_CONTROL",
+			"疑似触发小红书风控，已暂停该账号的操作", details)
+		return
+	}
+
 	respondError(c, http.StatusInternalServerError, code, message, err.Error())
 }
 

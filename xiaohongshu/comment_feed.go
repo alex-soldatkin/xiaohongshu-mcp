@@ -64,6 +64,12 @@ func (f *CommentFeedAction) PostComment(ctx context.Context, feedID, xsecToken, 
 
 	humanize.Delay(ctx, humanize.AfterType)
 
+	// Check before the submit, not only after the navigation: a challenge can
+	// appear while the comment is being typed (issue #11).
+	if err := checkRiskControl(page); err != nil {
+		return err
+	}
+
 	submitButton, err := page.Element("div.bottom button.submit")
 	if err != nil {
 		logrus.Warnf("Failed to find submit button: %v", err)
@@ -169,6 +175,11 @@ func (f *CommentFeedAction) ReplyToComment(ctx context.Context, feedID, xsecToke
 	}
 
 	humanize.Delay(ctx, humanize.AfterType)
+
+	// Same pre-submit check as PostComment (issue #11).
+	if err := checkRiskControl(page); err != nil {
+		return err
+	}
 
 	// 查找并点击提交按钮
 	submitBtn, err := page.Element("div.bottom button.submit")

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<!--
+  The login modal. Unlike the captcha fixture, the ".login-container
+  .qrcode-img" structure here is real: login.go has been reading it against the
+  live site since before risk_control.go existed. The surrounding note markup is
+  simplified.
+-->
+<html lang="zh-CN">
+<head><title>小红书</title></head>
+<body>
+<div id="app">
+  <div class="main-container">
+    <div class="note-detail">笔记正文</div>
+  </div>
+  <div class="login-container">
+    <div class="qrcode"><img class="qrcode-img" src="data:image/png;base64,iVBORw0KGgo="></div>
+    <p class="title">扫码登录</p>
+  </div>
+</div>
+</body>
+</html>

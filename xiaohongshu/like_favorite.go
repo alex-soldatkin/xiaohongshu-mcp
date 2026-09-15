@@ -57,6 +57,12 @@ func (a *interactAction) preparePage(ctx context.Context, actionType interactAct
 }
 
 func (a *interactAction) performClick(page *rod.Page, selector string) error {
+	// A like is a submit too: it is the action the site is most likely to
+	// challenge in bulk (issue #11).
+	if err := checkRiskControl(page); err != nil {
+		return err
+	}
+
 	element, err := page.Element(selector)
 	if err != nil {
 		return fmt.Errorf("未找到交互元素 %s: %w", selector, err)

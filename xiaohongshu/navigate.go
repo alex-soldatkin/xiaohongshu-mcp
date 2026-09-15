@@ -85,6 +85,21 @@ func navigateFrom(ctx context.Context, page *rod.Page, url, referrer string, wai
 		}
 	}
 
+	// Every deep link lands here, which makes this the one place where a
+	// redirect to a captcha or a security interstitial can be caught for the
+	// whole codebase (issue #11). A challenge reported here is the difference
+	// between "flagged" and "the selector we were waiting for timed out".
+	//
+	// navWaitNone callers are skipped on purpose: nothing has loaded yet, so the
+	// document still belongs to the previous page and judging it would be
+	// judging the wrong page. Those callers (the publish flows) wait for load
+	// themselves and are covered by the check before their submit.
+	if wait >= navWaitLoad {
+		if err := checkRiskControl(page); err != nil {
+			return err
+		}
+	}
+
 	humanize.Delay(ctx, humanize.AfterNavigate)
 	return nil
 }

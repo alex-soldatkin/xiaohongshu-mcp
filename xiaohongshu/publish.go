@@ -440,6 +440,12 @@ type publishButton struct {
 }
 
 func clickPublishButton(page *rod.Page) error {
+	// Last check before the most expensive action there is (issue #11): a note
+	// submitted into a challenged session is a note that quietly does not exist.
+	if err := checkRiskControl(page); err != nil {
+		return err
+	}
+
 	btn, err := waitForPublishButtonClickable(page, 15*time.Second)
 	if err != nil {
 		return err

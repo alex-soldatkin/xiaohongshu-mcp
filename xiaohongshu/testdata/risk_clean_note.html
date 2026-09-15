@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<!--
+  The false-positive trap: an ordinary, perfectly readable note whose author
+  happens to write about 安全验证 and 拖动滑块, and whose page ships an inline
+  script mentioning a captcha module. Nothing here is a challenge. If a detector
+  fires on this file it would cost a healthy account a 30-minute cooldown for
+  reading a note that loaded fine.
+-->
+<html lang="zh-CN">
+<head><title>小红书 - 笔记</title></head>
+<body>
+<div id="app">
+  <div class="main-container">
+    <div class="user side-bar-component"><a class="link-wrapper"><span class="channel">我</span></a></div>
+    <div class="note-detail">
+      <div class="title">教你看懂各种安全验证</div>
+      <div class="desc">很多网站登录时会让你拖动滑块，请完成验证之后才能继续，这篇讲讲原理。</div>
+    </div>
+    <div class="comments-container"><div class="comment-item">学到了，安全验证原来是这样</div></div>
+  </div>
+  <script>window.__INITIAL_STATE__={modules:["captcha","verify"]};</script>
+</div>
+</body>
+</html>

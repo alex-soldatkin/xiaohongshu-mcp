@@ -75,6 +75,11 @@ func (n *NotificationAction) Reply(ctx context.Context, commentID, content strin
 	}
 	humanize.Delay(ctx, humanize.AfterType)
 
+	// Pre-submit risk check (issue #11).
+	if err := checkRiskControl(page); err != nil {
+		return nil, err
+	}
+
 	submit, err := item.Element(`button.submit`)
 	if err != nil {
 		return nil, fmt.Errorf("未找到发送按钮: %w", err)

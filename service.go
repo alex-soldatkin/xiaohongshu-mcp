@@ -36,8 +36,15 @@ func NewXiaohongshuService() *XiaohongshuService {
 	profileDir := configs.ProfileDir()
 	logrus.Infof("browser profile directory: %s", profileDir)
 
+	gate := pacing.New(pacing.ConfigFromEnv())
+
+	// Risk-control detection (issue #11) lives in the xiaohongshu package,
+	// which has no access to the gate. Hand it the one thing it needs: the
+	// ability to silence the gate when a challenge is seen twice.
+	xiaohongshu.SetRiskCooldownHook(gate.Cooldown)
+
 	return &XiaohongshuService{
-		gate: pacing.New(pacing.ConfigFromEnv()),
+		gate: gate,
 		browser: browser.NewManager(browser.ManagerConfig{
 			Headless: configs.IsHeadless(),
 			Options: []browser.Option{
