@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/sirupsen/logrus"
 	"github.com/xpzouying/headless_browser"
@@ -45,6 +46,11 @@ type browserConfig struct {
 	// Read from disk by the caller, again to keep buildOptions pure.
 	cookiesJSON string
 
+	// launcherHook runs against the rod launcher just before it starts the
+	// process. The manager uses it to capture the launcher, which is the only
+	// handle that can kill a browser whose CDP connection has died.
+	launcherHook func(*launcher.Launcher)
+
 	// userDataDir is the persistent Chrome profile directory (issue #6).
 	// Empty = rod picks a temp dir and deletes it on Close.
 	//
@@ -83,6 +89,18 @@ func WithTimezone(tz string) Option {
 func WithUserDataDir(dir string) Option {
 	return func(c *browserConfig) {
 		c.userDataDir = dir
+	}
+}
+
+// WithLauncherHook registers a callback run against the rod launcher after
+// every flag has been applied and before the process starts.
+//
+// Never call l.Preferences from it with a persistent profile: rod implements
+// that by overwriting <profile>/Default/Preferences wholesale on every launch,
+// which would throw away Chrome's own accumulated preferences.
+func WithLauncherHook(hook func(*launcher.Launcher)) Option {
+	return func(c *browserConfig) {
+		c.launcherHook = hook
 	}
 }
 
@@ -211,6 +229,10 @@ func buildOptions(cfg *browserConfig) []headless_browser.Option {
 
 	if cfg.cookiesJSON != "" {
 		opts = append(opts, headless_browser.WithCookies(cfg.cookiesJSON))
+	}
+
+	if cfg.launcherHook != nil {
+		opts = append(opts, headless_browser.WithLauncherHook(cfg.launcherHook))
 	}
 
 	// Persistent profile (#6). An option, never a flag: only this option sets
