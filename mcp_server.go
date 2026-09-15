@@ -38,10 +38,31 @@ type PublishVideoArgs struct {
 	Products   []string `json:"products,omitempty" jsonschema:"商品关键词列表（可选），用于绑定带货商品。填写商品名称或商品ID，系统会自动搜索并选择第一个匹配结果。需账号已开通商品功能。示例: [面膜, 防晒霜SPF50]"`
 }
 
+// RefreshArgs is embedded in every read tool's arguments (issue #7).
+//
+// jsonschema-go flattens anonymous fields, so embedding adds one property to
+// each tool's schema without a per-tool declaration. The flag is plumbed into
+// the request context and read by the cache layer: set, it skips the lookup
+// and overwrites the stored document with what the browser returns.
+type RefreshArgs struct {
+	ForceRefresh bool `json:"force_refresh,omitempty" jsonschema:"跳过本地缓存，强制走浏览器重新抓取。默认 false，即命中未过期的缓存时直接返回，不消耗账号的请求预算"`
+}
+
+// ListFeedsArgs 首页 Feeds 列表参数
+type ListFeedsArgs struct {
+	RefreshArgs
+}
+
+// UnreadCountArgs 未读数参数
+type UnreadCountArgs struct {
+	RefreshArgs
+}
+
 // SearchFeedsArgs 搜索内容的参数
 type SearchFeedsArgs struct {
 	Keyword string       `json:"keyword" jsonschema:"搜索关键词"`
 	Filters FilterOption `json:"filters,omitempty" jsonschema:"筛选选项"`
+	RefreshArgs
 }
 
 // FilterOption 筛选选项结构体
@@ -62,6 +83,7 @@ type FeedDetailArgs struct {
 	ClickMoreReplies bool   `json:"click_more_replies,omitempty" jsonschema:"【仅当load_all_comments为true时生效】是否展开二级回复。true展开子评论，false不展开（默认）"`
 	ReplyLimit       int    `json:"reply_limit,omitempty" jsonschema:"【仅当click_more_replies为true时生效】跳过回复数过多的评论。例如10表示跳过超过10条回复的，默认10"`
 	ScrollSpeed      string `json:"scroll_speed,omitempty" jsonschema:"【仅当load_all_comments为true时生效】滚动速度slow慢速、normal正常、fast快速"`
+	RefreshArgs
 }
 
 // UserProfileArgs 获取用户主页的参数
@@ -69,11 +91,13 @@ type UserProfileArgs struct {
 	UserID    string `json:"user_id" jsonschema:"小红书用户ID，从Feed列表获取"`
 	XsecToken string `json:"xsec_token" jsonschema:"访问令牌，从Feed列表的xsecToken字段获取"`
 	Tab       string `json:"tab,omitempty" jsonschema:"主页 tab: note(笔记,默认)|fav(收藏)|liked(点赞)。收藏和点赞可能被对方设为不公开"`
+	RefreshArgs
 }
 
 // MyProfileArgs 我的主页参数
 type MyProfileArgs struct {
 	Tab string `json:"tab,omitempty" jsonschema:"主页 tab: note(笔记,默认)|fav(收藏)|liked(点赞)"`
+	RefreshArgs
 }
 
 // PostCommentArgs 发表评论的参数
@@ -110,6 +134,7 @@ type FavoriteFeedArgs struct {
 type ListNotificationsArgs struct {
 	Tab   string `json:"tab,omitempty" jsonschema:"通知分区: mentions(评论和@,默认)|likes(赞和收藏)|connections(新增关注)"`
 	Limit int    `json:"limit,omitempty" jsonschema:"返回条数上限，默认20"`
+	RefreshArgs
 }
 
 // LikeNotificationArgs 通知点赞参数
@@ -262,7 +287,8 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 				ReadOnlyHint: true,
 			},
 		},
-		withPanicRecovery("list_feeds", func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, any, error) {
+		withPanicRecovery("list_feeds", func(ctx context.Context, req *mcp.CallToolRequest, args ListFeedsArgs) (*mcp.CallToolResult, any, error) {
+			ctx = withForceRefresh(ctx, args.ForceRefresh)
 			result := appServer.handleListFeeds(ctx)
 			return convertToMCPResult(result), nil, nil
 		}),
@@ -279,6 +305,7 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 			},
 		},
 		withPanicRecovery("search_feeds", func(ctx context.Context, req *mcp.CallToolRequest, args SearchFeedsArgs) (*mcp.CallToolResult, any, error) {
+			ctx = withForceRefresh(ctx, args.ForceRefresh)
 			result := appServer.handleSearchFeeds(ctx, args)
 			return convertToMCPResult(result), nil, nil
 		}),
@@ -295,6 +322,7 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 			},
 		},
 		withPanicRecovery("get_feed_detail", func(ctx context.Context, req *mcp.CallToolRequest, args FeedDetailArgs) (*mcp.CallToolResult, any, error) {
+			ctx = withForceRefresh(ctx, args.ForceRefresh)
 			argsMap := map[string]interface{}{
 				"feed_id":           args.FeedID,
 				"xsec_token":        args.XsecToken,
@@ -340,6 +368,7 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 			},
 		},
 		withPanicRecovery("user_profile", func(ctx context.Context, req *mcp.CallToolRequest, args UserProfileArgs) (*mcp.CallToolResult, any, error) {
+			ctx = withForceRefresh(ctx, args.ForceRefresh)
 			argsMap := map[string]interface{}{
 				"user_id":    args.UserID,
 				"xsec_token": args.XsecToken,
@@ -479,6 +508,7 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 			},
 		},
 		withPanicRecovery("get_my_profile", func(ctx context.Context, req *mcp.CallToolRequest, args MyProfileArgs) (*mcp.CallToolResult, any, error) {
+			ctx = withForceRefresh(ctx, args.ForceRefresh)
 			result := appServer.handleGetMyProfile(ctx, args.Tab)
 			return convertToMCPResult(result), nil, nil
 		}),
@@ -494,7 +524,8 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 				ReadOnlyHint: true,
 			},
 		},
-		withPanicRecovery("get_unread_count", func(ctx context.Context, req *mcp.CallToolRequest, _ any) (*mcp.CallToolResult, any, error) {
+		withPanicRecovery("get_unread_count", func(ctx context.Context, req *mcp.CallToolRequest, args UnreadCountArgs) (*mcp.CallToolResult, any, error) {
+			ctx = withForceRefresh(ctx, args.ForceRefresh)
 			result := appServer.handleGetUnreadCount(ctx)
 			return convertToMCPResult(result), nil, nil
 		}),
@@ -504,13 +535,14 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 	mcp.AddTool(server,
 		&mcp.Tool{
 			Name:        "list_notifications",
-			Description: "获取通知列表。返回评论内容、评论者、以及对应笔记的 feed_id 和 xsec_token（可用于 get_feed_detail 读原帖）。已删除或不可见的条目会被过滤，过滤数量见 filtered 字段。注意：会清除该分区的未读标记，只需要未读数时用 get_unread_count。",
+			Description: "获取通知列表。返回评论内容、评论者、以及对应笔记的 feed_id 和 xsec_token（可用于 get_feed_detail 读原帖）。已删除或不可见的条目会被过滤，过滤数量见 filtered 字段。注意：真正访问页面时会清除该分区的未读标记（只需要未读数时用 get_unread_count）；命中本地缓存直接返回时不访问页面，也就不会清除未读标记，需要清除请传 force_refresh=true。",
 			Annotations: &mcp.ToolAnnotations{
 				Title:        "List Notifications",
 				ReadOnlyHint: true,
 			},
 		},
 		withPanicRecovery("list_notifications", func(ctx context.Context, req *mcp.CallToolRequest, args ListNotificationsArgs) (*mcp.CallToolResult, any, error) {
+			ctx = withForceRefresh(ctx, args.ForceRefresh)
 			result := appServer.handleListNotifications(ctx, args.Tab, args.Limit)
 			return convertToMCPResult(result), nil, nil
 		}),

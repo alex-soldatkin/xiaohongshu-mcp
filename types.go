@@ -1,6 +1,35 @@
 package main
 
-import "github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
+import (
+	"time"
+
+	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
+)
+
+// CacheMeta is the freshness information the read-through cache attaches to a
+// response (issue #7, decision D2). An agent looking at a five-hour-old
+// profile should be able to tell that it is.
+//
+// Both fields are omitempty and both are left unset when no store is
+// configured, so the default deployment's response bytes are exactly what they
+// were before the cache existed.
+type CacheMeta struct {
+	// Cached is true when this response was served from the store without
+	// touching the browser.
+	Cached bool `json:"cached,omitempty"`
+	// FetchedAt is when the payload was obtained from the site.
+	FetchedAt *time.Time `json:"fetched_at,omitempty"`
+}
+
+// newCacheMeta builds the metadata for a response. A zero fetchedAt means the
+// store is disabled, and then nothing is reported at all.
+func newCacheMeta(fetchedAt time.Time, cached bool) CacheMeta {
+	if fetchedAt.IsZero() {
+		return CacheMeta{}
+	}
+	at := fetchedAt.UTC()
+	return CacheMeta{Cached: cached, FetchedAt: &at}
+}
 
 // HTTP API 响应类型
 
@@ -63,6 +92,23 @@ type SearchFeedsRequest struct {
 type FeedDetailResponse struct {
 	FeedID string `json:"feed_id"`
 	Data   any    `json:"data"`
+	CacheMeta
+}
+
+// NotificationListResponse wraps a notification listing with cache metadata.
+//
+// The listing itself is a xiaohongshu type and stays untouched; embedding it by
+// pointer flattens its fields into the same JSON object, so the response shape
+// is unchanged apart from the two omitempty cache fields.
+type NotificationListResponse struct {
+	*xiaohongshu.NotificationList
+	CacheMeta
+}
+
+// UnreadCountResponse wraps the unread counters with cache metadata.
+type UnreadCountResponse struct {
+	*xiaohongshu.NotificationCount
+	CacheMeta
 }
 
 // PostCommentRequest 发表评论请求

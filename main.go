@@ -55,9 +55,6 @@ func main() {
 	// deployment: store.Open returns a no-op store and behaviour is unchanged.
 	// Set but unreachable is fatal, mirroring the missing-browser check above
 	// — degrading quietly would leave an operator believing the cache works.
-	// The read-through cache that consumes this store arrives with WS2; the
-	// store is opened here regardless so the reachability check happens at
-	// startup rather than on the first cached read.
 	databaseURL := os.Getenv("XHS_DATABASE_URL")
 	dataStore, err := store.Open(context.Background(), databaseURL)
 	if err != nil {
@@ -69,7 +66,7 @@ func main() {
 	}
 
 	// 初始化服务
-	xiaohongshuService := NewXiaohongshuService()
+	xiaohongshuService := NewXiaohongshuService(WithStore(dataStore))
 
 	// 创建并启动应用服务器
 	appServer := NewAppServer(xiaohongshuService, token)

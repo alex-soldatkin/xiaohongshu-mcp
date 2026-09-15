@@ -14,6 +14,7 @@ import (
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
 	"github.com/xpzouying/xiaohongshu-mcp/pkg/downloader"
 	"github.com/xpzouying/xiaohongshu-mcp/pkg/pacing"
+	"github.com/xpzouying/xiaohongshu-mcp/pkg/store"
 	"github.com/xpzouying/xiaohongshu-mcp/pkg/xhsutil"
 	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
 )
@@ -29,10 +30,39 @@ type XiaohongshuService struct {
 	// browser owns the single long-lived browser and its persistent profile
 	// (issue #6). It is the only place a browser is launched.
 	browser *browser.Manager
+
+	// runHook replaces the browser path when set. It is the seam the cache
+	// tests use to exercise the read-through logic without launching Chrome;
+	// production never sets it and pays one nil check per browser action.
+	runHook func(ctx context.Context, class pacing.Class, fn func(page *rod.Page) error) error
+
+	// cache is the read-through layer from issue #7. It is consulted before
+	// the gate, never inside s.run, so a hit costs neither a pacing gap nor a
+	// read against the account's budget. With no store configured it is
+	// disabled and every method below behaves exactly as it did before.
+	cache *serviceCache
+}
+
+// ServiceOption customises the service at construction.
+type ServiceOption func(*serviceOptions)
+
+type serviceOptions struct {
+	store store.Store
+}
+
+// WithStore hands the service the persistence layer opened in main. Without
+// it the service runs on a no-op store, which is the default deployment.
+func WithStore(st store.Store) ServiceOption {
+	return func(o *serviceOptions) { o.store = st }
 }
 
 // NewXiaohongshuService 创建小红书服务实例
-func NewXiaohongshuService() *XiaohongshuService {
+func NewXiaohongshuService(opts ...ServiceOption) *XiaohongshuService {
+	var options serviceOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	profileDir := configs.ProfileDir()
 	logrus.Infof("browser profile directory: %s", profileDir)
 
@@ -43,8 +73,18 @@ func NewXiaohongshuService() *XiaohongshuService {
 	// ability to silence the gate when a challenge is seen twice.
 	xiaohongshu.SetRiskCooldownHook(gate.Cooldown)
 
+	cache := newServiceCache(options.store)
+	// Recovering the account from the fingerprint seed costs one query and
+	// saves the first read from having to discover it. A fresh database simply
+	// leaves the account unknown until the first successful read observes it.
+	seedCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	cache.seedAccount(seedCtx)
+	cancel()
+	cache.startRetention()
+
 	return &XiaohongshuService{
-		gate: gate,
+		gate:  gate,
+		cache: cache,
 		browser: browser.NewManager(browser.ManagerConfig{
 			Headless: configs.IsHeadless(),
 			Options: []browser.Option{
@@ -63,6 +103,7 @@ func NewXiaohongshuService() *XiaohongshuService {
 // and the browser. Called from AppServer.Start after the HTTP server stops.
 func (s *XiaohongshuService) Close(ctx context.Context) {
 	s.logins.cancelCurrent()
+	s.cache.close()
 	s.browser.Shutdown(ctx)
 }
 
@@ -80,6 +121,10 @@ func (s *XiaohongshuService) Gate() *pacing.Gate {
 // Errors from the gate (*errors.ErrRateLimited) are returned to the caller
 // unchanged.
 func (s *XiaohongshuService) run(ctx context.Context, class pacing.Class, fn func(page *rod.Page) error) error {
+	if s.runHook != nil {
+		return s.runHook(ctx, class, fn)
+	}
+
 	release, err := s.gate.Acquire(ctx, class)
 	if err != nil {
 		return err
@@ -152,6 +197,7 @@ type PublishVideoResponse struct {
 type FeedsListResponse struct {
 	Feeds []xiaohongshu.Feed `json:"feeds"`
 	Count int                `json:"count"`
+	CacheMeta
 }
 
 // UserProfileResponse 用户主页响应
@@ -159,6 +205,7 @@ type UserProfileResponse struct {
 	UserBasicInfo xiaohongshu.UserBasicInfo      `json:"userBasicInfo"`
 	Interactions  []xiaohongshu.UserInteractions `json:"interactions"`
 	Feeds         []xiaohongshu.Feed             `json:"feeds"`
+	CacheMeta
 }
 
 // resetTimeout bounds how long "reset login" waits for an in-flight action to
@@ -196,6 +243,11 @@ func (s *XiaohongshuService) DeleteCookies(ctx context.Context) error {
 		return err
 	}
 
+	// Forget who we are: the next read observes the new account from the page.
+	// Documents already stored stay correct because they are keyed by user id,
+	// not by the seed, which survives this reset by design.
+	s.cache.clearAccount()
+
 	if seed > 0 {
 		if err := store.SaveSeed(seed); err != nil {
 			// The account can still log in; it would just come back on a new
@@ -226,6 +278,9 @@ func (s *XiaohongshuService) CheckLoginStatus(ctx context.Context) (*LoginStatus
 			} else {
 				response.Username = user.Nickname
 				response.UserID = user.UserID
+				// Not cached itself, but it is the cheapest place to learn
+				// which account the cache is scoped to.
+				s.cache.rememberAccount(ctx, user.UserID, user.Nickname)
 			}
 		}
 		return nil
@@ -401,6 +456,10 @@ func (s *XiaohongshuService) processImages(images []string) ([]string, error) {
 
 // publishContent 执行内容发布
 func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohongshu.PublishImageContent) error {
+	// Every tab of the account's own profile can change: a publish that fails
+	// late may still have left a draft or a published note behind.
+	s.cache.invalidate(ctx, store.KindMyProfile)
+
 	return s.run(ctx, pacing.ClassPublish, func(page *rod.Page) error {
 		action, err := xiaohongshu.NewPublishImageAction(page)
 		if err != nil {
@@ -476,6 +535,8 @@ func (s *XiaohongshuService) PublishVideo(ctx context.Context, req *PublishVideo
 
 // publishVideo 执行视频发布
 func (s *XiaohongshuService) publishVideo(ctx context.Context, content xiaohongshu.PublishVideoContent) error {
+	s.cache.invalidate(ctx, store.KindMyProfile)
+
 	return s.run(ctx, pacing.ClassPublish, func(page *rod.Page) error {
 		action, err := xiaohongshu.NewPublishVideoAction(page)
 		if err != nil {
@@ -488,43 +549,39 @@ func (s *XiaohongshuService) publishVideo(ctx context.Context, content xiaohongs
 
 // ListFeeds 获取Feeds列表
 func (s *XiaohongshuService) ListFeeds(ctx context.Context) (*FeedsListResponse, error) {
-	var feeds []xiaohongshu.Feed
-
-	err := s.run(ctx, pacing.ClassRead, func(page *rod.Page) error {
-		var err error
-		feeds, err = xiaohongshu.NewFeedsListAction(page).GetFeedsList(ctx)
-		return err
-	})
+	response, fetchedAt, cached, err := readThrough(ctx, s,
+		store.KindFeed, "home", s.cache.ttl(store.KindFeed), nil, nil,
+		func(page *rod.Page) (*FeedsListResponse, error) {
+			feeds, err := xiaohongshu.NewFeedsListAction(page).GetFeedsList(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &FeedsListResponse{Feeds: feeds, Count: len(feeds)}, nil
+		})
 	if err != nil {
 		logrus.Errorf("获取 Feeds 列表失败: %v", err)
 		return nil, err
 	}
 
-	response := &FeedsListResponse{
-		Feeds: feeds,
-		Count: len(feeds),
-	}
-
+	response.CacheMeta = newCacheMeta(fetchedAt, cached)
 	return response, nil
 }
 
 func (s *XiaohongshuService) SearchFeeds(ctx context.Context, keyword string, filters ...xiaohongshu.FilterOption) (*FeedsListResponse, error) {
-	var feeds []xiaohongshu.Feed
-
-	err := s.run(ctx, pacing.ClassRead, func(page *rod.Page) error {
-		var err error
-		feeds, err = xiaohongshu.NewSearchAction(page).Search(ctx, keyword, filters...)
-		return err
-	})
+	response, fetchedAt, cached, err := readThrough(ctx, s,
+		store.KindSearch, searchCacheKey(keyword, filters...), s.cache.ttl(store.KindSearch), nil, nil,
+		func(page *rod.Page) (*FeedsListResponse, error) {
+			feeds, err := xiaohongshu.NewSearchAction(page).Search(ctx, keyword, filters...)
+			if err != nil {
+				return nil, err
+			}
+			return &FeedsListResponse{Feeds: feeds, Count: len(feeds)}, nil
+		})
 	if err != nil {
 		return nil, err
 	}
 
-	response := &FeedsListResponse{
-		Feeds: feeds,
-		Count: len(feeds),
-	}
-
+	response.CacheMeta = newCacheMeta(fetchedAt, cached)
 	return response, nil
 }
 
@@ -535,23 +592,38 @@ func (s *XiaohongshuService) GetFeedDetail(ctx context.Context, feedID, xsecToke
 
 // GetFeedDetailWithConfig 使用配置获取Feed详情
 func (s *XiaohongshuService) GetFeedDetailWithConfig(ctx context.Context, feedID, xsecToken string, loadAllComments bool, config xiaohongshu.CommentLoadConfig) (*FeedDetailResponse, error) {
-	var result *xiaohongshu.FeedDetailResponse
+	// A note_full document holds the same note with more of its comments
+	// loaded, so it satisfies a plain note request as well and is looked up
+	// first in both cases. The reverse is not true: a note document has only
+	// the first page of comments, so a load-all request may not be served
+	// from it, and a note_full may only be served when it was loaded at least
+	// as completely as this request asks for.
+	putKind := store.KindNote
+	lookups := []cacheLookup{
+		{kind: store.KindNoteFull, key: feedID, ttl: s.cache.ttl(store.KindNoteFull)},
+		{kind: store.KindNote, key: feedID, ttl: s.cache.ttl(store.KindNote)},
+	}
+	var meta any
+	if loadAllComments {
+		putKind = store.KindNoteFull
+		meta = newCommentConfigMeta(config)
+		lookups = lookups[:1]
+		lookups[0].accept = acceptCommentConfig(config)
+	}
 
-	err := s.run(ctx, pacing.ClassRead, func(page *rod.Page) error {
-		var err error
-		result, err = xiaohongshu.NewFeedDetailAction(page).GetFeedDetailWithConfig(ctx, feedID, xsecToken, loadAllComments, config)
-		return err
-	})
+	result, fetchedAt, cached, err := readThroughFrom(ctx, s, lookups, putKind, feedID, meta,
+		func(page *rod.Page) (*xiaohongshu.FeedDetailResponse, error) {
+			return xiaohongshu.NewFeedDetailAction(page).GetFeedDetailWithConfig(ctx, feedID, xsecToken, loadAllComments, config)
+		})
 	if err != nil {
 		return nil, err
 	}
 
-	response := &FeedDetailResponse{
-		FeedID: feedID,
-		Data:   result,
-	}
-
-	return response, nil
+	return &FeedDetailResponse{
+		FeedID:    feedID,
+		Data:      result,
+		CacheMeta: newCacheMeta(fetchedAt, cached),
+	}, nil
 }
 
 // UserProfile 获取用户信息
@@ -561,28 +633,34 @@ func (s *XiaohongshuService) UserProfile(ctx context.Context, userID, xsecToken,
 		return nil, err
 	}
 
-	var result *xiaohongshu.UserProfileResponse
-
-	err = s.run(ctx, pacing.ClassRead, func(page *rod.Page) error {
-		var err error
-		result, err = xiaohongshu.NewUserProfileAction(page).UserProfile(ctx, userID, xsecToken, parsed)
-		return err
-	})
+	response, fetchedAt, cached, err := readThrough(ctx, s,
+		store.KindProfile, profileCacheKey(userID, parsed), s.cache.ttl(store.KindProfile), nil, nil,
+		func(page *rod.Page) (*UserProfileResponse, error) {
+			result, err := xiaohongshu.NewUserProfileAction(page).UserProfile(ctx, userID, xsecToken, parsed)
+			if err != nil {
+				return nil, err
+			}
+			return &UserProfileResponse{
+				UserBasicInfo: result.UserBasicInfo,
+				Interactions:  result.Interactions,
+				Feeds:         result.Feeds,
+			}, nil
+		})
 	if err != nil {
 		return nil, err
 	}
-	response := &UserProfileResponse{
-		UserBasicInfo: result.UserBasicInfo,
-		Interactions:  result.Interactions,
-		Feeds:         result.Feeds,
-	}
 
+	response.CacheMeta = newCacheMeta(fetchedAt, cached)
 	return response, nil
-
 }
 
 // PostCommentToFeed 发表评论到Feed
 func (s *XiaohongshuService) PostCommentToFeed(ctx context.Context, feedID, xsecToken, content string) (*PostCommentResponse, error) {
+	// Invalidation runs before the browser action, not after: an action that
+	// fails halfway may still have changed the site, and a stale document that
+	// outlives a failed write is worse than one needless refetch.
+	s.cache.invalidateNote(ctx, feedID)
+
 	err := s.run(ctx, pacing.ClassWrite, func(page *rod.Page) error {
 		return xiaohongshu.NewCommentFeedAction(page).PostComment(ctx, feedID, xsecToken, content)
 	})
@@ -595,6 +673,12 @@ func (s *XiaohongshuService) PostCommentToFeed(ctx context.Context, feedID, xsec
 
 // LikeFeed 点赞笔记
 func (s *XiaohongshuService) LikeFeed(ctx context.Context, feedID, xsecToken string) (*ActionResult, error) {
+	// Invalidation runs before the browser action, not after: an action that
+	// fails halfway may still have changed the site, and a stale document that
+	// outlives a failed write is worse than one needless refetch.
+	s.cache.invalidateNote(ctx, feedID)
+	s.cache.invalidate(ctx, store.KindMyProfile, string(xiaohongshu.TabLiked))
+
 	err := s.run(ctx, pacing.ClassWrite, func(page *rod.Page) error {
 		return xiaohongshu.NewLikeAction(page).Like(ctx, feedID, xsecToken)
 	})
@@ -606,6 +690,9 @@ func (s *XiaohongshuService) LikeFeed(ctx context.Context, feedID, xsecToken str
 
 // UnlikeFeed 取消点赞笔记
 func (s *XiaohongshuService) UnlikeFeed(ctx context.Context, feedID, xsecToken string) (*ActionResult, error) {
+	s.cache.invalidateNote(ctx, feedID)
+	s.cache.invalidate(ctx, store.KindMyProfile, string(xiaohongshu.TabLiked))
+
 	err := s.run(ctx, pacing.ClassWrite, func(page *rod.Page) error {
 		return xiaohongshu.NewLikeAction(page).Unlike(ctx, feedID, xsecToken)
 	})
@@ -617,6 +704,9 @@ func (s *XiaohongshuService) UnlikeFeed(ctx context.Context, feedID, xsecToken s
 
 // FavoriteFeed 收藏笔记
 func (s *XiaohongshuService) FavoriteFeed(ctx context.Context, feedID, xsecToken string) (*ActionResult, error) {
+	s.cache.invalidateNote(ctx, feedID)
+	s.cache.invalidate(ctx, store.KindMyProfile, string(xiaohongshu.TabFavorites))
+
 	err := s.run(ctx, pacing.ClassWrite, func(page *rod.Page) error {
 		return xiaohongshu.NewFavoriteAction(page).Favorite(ctx, feedID, xsecToken)
 	})
@@ -628,6 +718,9 @@ func (s *XiaohongshuService) FavoriteFeed(ctx context.Context, feedID, xsecToken
 
 // UnfavoriteFeed 取消收藏笔记
 func (s *XiaohongshuService) UnfavoriteFeed(ctx context.Context, feedID, xsecToken string) (*ActionResult, error) {
+	s.cache.invalidateNote(ctx, feedID)
+	s.cache.invalidate(ctx, store.KindMyProfile, string(xiaohongshu.TabFavorites))
+
 	err := s.run(ctx, pacing.ClassWrite, func(page *rod.Page) error {
 		return xiaohongshu.NewFavoriteAction(page).Unfavorite(ctx, feedID, xsecToken)
 	})
@@ -639,6 +732,8 @@ func (s *XiaohongshuService) UnfavoriteFeed(ctx context.Context, feedID, xsecTok
 
 // ReplyCommentToFeed 回复指定评论
 func (s *XiaohongshuService) ReplyCommentToFeed(ctx context.Context, feedID, xsecToken, commentID, userID, content string) (*ReplyCommentResponse, error) {
+	s.cache.invalidateNote(ctx, feedID)
+
 	err := s.run(ctx, pacing.ClassWrite, func(page *rod.Page) error {
 		return xiaohongshu.NewCommentFeedAction(page).ReplyToComment(ctx, feedID, xsecToken, commentID, userID, content)
 	})
@@ -656,44 +751,64 @@ func (s *XiaohongshuService) ReplyCommentToFeed(ctx context.Context, feedID, xse
 }
 
 // GetUnreadCount 获取通知未读数
-func (s *XiaohongshuService) GetUnreadCount(ctx context.Context) (*xiaohongshu.NotificationCount, error) {
-	var result *xiaohongshu.NotificationCount
-
-	err := s.run(ctx, pacing.ClassRead, func(page *rod.Page) error {
-		var err error
-		result, err = xiaohongshu.NewNotificationAction(page).UnreadCount(ctx)
-		return err
-	})
+func (s *XiaohongshuService) GetUnreadCount(ctx context.Context) (*UnreadCountResponse, error) {
+	result, fetchedAt, cached, err := readThrough(ctx, s,
+		store.KindUnread, "count", s.cache.ttl(store.KindUnread), nil, nil,
+		func(page *rod.Page) (*xiaohongshu.NotificationCount, error) {
+			return xiaohongshu.NewNotificationAction(page).UnreadCount(ctx)
+		})
 	if err != nil {
 		return nil, err
 	}
 
-	return result, nil
+	return &UnreadCountResponse{
+		NotificationCount: result,
+		CacheMeta:         newCacheMeta(fetchedAt, cached),
+	}, nil
 }
 
 // ListNotifications 获取指定分区的通知列表
-func (s *XiaohongshuService) ListNotifications(ctx context.Context, tab string, limit int) (*xiaohongshu.NotificationList, error) {
+func (s *XiaohongshuService) ListNotifications(ctx context.Context, tab string, limit int) (*NotificationListResponse, error) {
 	parsed, err := xiaohongshu.ParseNotificationTab(tab)
 	if err != nil {
 		return nil, err
 	}
 
-	var result *xiaohongshu.NotificationList
-
-	err = s.run(ctx, pacing.ClassRead, func(page *rod.Page) error {
-		var err error
-		result, err = xiaohongshu.NewNotificationAction(page).List(ctx, parsed, limit)
-		return err
-	})
+	result, fetchedAt, cached, err := readThrough(ctx, s,
+		store.KindNotifications, string(parsed), s.cache.ttl(store.KindNotifications),
+		acceptNotificationLimit(limit), notificationListMeta{Limit: limit},
+		func(page *rod.Page) (*xiaohongshu.NotificationList, error) {
+			return xiaohongshu.NewNotificationAction(page).List(ctx, parsed, limit)
+		})
 	if err != nil {
 		return nil, err
 	}
 
-	return result, nil
+	if cached {
+		// A longer listing may serve a shorter request; hand back only what
+		// was asked for.
+		if limit > 0 && len(result.Items) > limit {
+			result.Items = result.Items[:limit]
+		}
+	} else {
+		// The live listing cleared this tab's unread marks on the site, so a
+		// cached unread count is now a lie. Drop it.
+		s.cache.invalidate(ctx, store.KindUnread)
+	}
+
+	return &NotificationListResponse{
+		NotificationList: result,
+		CacheMeta:        newCacheMeta(fetchedAt, cached),
+	}, nil
 }
 
 // LikeNotification 给通知里的评论点赞或取消点赞
 func (s *XiaohongshuService) LikeNotification(ctx context.Context, commentID string, unlike bool) (*xiaohongshu.NotificationLikeResult, error) {
+	// The liked flag lives inside every cached listing of every tab, and the
+	// action navigates the notification page, which clears unread marks.
+	s.cache.invalidate(ctx, store.KindNotifications)
+	s.cache.invalidate(ctx, store.KindUnread)
+
 	var result *xiaohongshu.NotificationLikeResult
 
 	err := s.run(ctx, pacing.ClassWrite, func(page *rod.Page) error {
@@ -710,6 +825,9 @@ func (s *XiaohongshuService) LikeNotification(ctx context.Context, commentID str
 
 // ReplyNotification 在通知页就地回复评论
 func (s *XiaohongshuService) ReplyNotification(ctx context.Context, commentID, content string) (*xiaohongshu.NotificationReplyResult, error) {
+	s.cache.invalidate(ctx, store.KindNotifications)
+	s.cache.invalidate(ctx, store.KindUnread)
+
 	var result *xiaohongshu.NotificationReplyResult
 
 	err := s.run(ctx, pacing.ClassWrite, func(page *rod.Page) error {
@@ -721,6 +839,10 @@ func (s *XiaohongshuService) ReplyNotification(ctx context.Context, commentID, c
 		return nil, err
 	}
 
+	// The note the comment belongs to is only known from the result, so this
+	// one invalidation cannot happen before the action.
+	s.cache.invalidateNote(ctx, result.FeedID)
+
 	return result, nil
 }
 
@@ -731,23 +853,23 @@ func (s *XiaohongshuService) GetMyProfile(ctx context.Context, tab string) (*Use
 		return nil, err
 	}
 
-	var result *xiaohongshu.UserProfileResponse
-
-	err = s.run(ctx, pacing.ClassRead, func(page *rod.Page) error {
-		var err error
-		result, err = xiaohongshu.NewUserProfileAction(page).GetMyProfileViaSidebar(ctx, parsed)
-		return err
-	})
-
+	response, fetchedAt, cached, err := readThrough(ctx, s,
+		store.KindMyProfile, string(parsed), s.cache.ttl(store.KindMyProfile), nil, nil,
+		func(page *rod.Page) (*UserProfileResponse, error) {
+			result, err := xiaohongshu.NewUserProfileAction(page).GetMyProfileViaSidebar(ctx, parsed)
+			if err != nil {
+				return nil, err
+			}
+			return &UserProfileResponse{
+				UserBasicInfo: result.UserBasicInfo,
+				Interactions:  result.Interactions,
+				Feeds:         result.Feeds,
+			}, nil
+		})
 	if err != nil {
 		return nil, err
 	}
 
-	response := &UserProfileResponse{
-		UserBasicInfo: result.UserBasicInfo,
-		Interactions:  result.Interactions,
-		Feeds:         result.Feeds,
-	}
-
+	response.CacheMeta = newCacheMeta(fetchedAt, cached)
 	return response, nil
 }

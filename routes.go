@@ -19,6 +19,8 @@ func setupRoutes(appServer *AppServer) *gin.Engine {
 	// 添加中间件
 	router.Use(errorHandlingMiddleware())
 	router.Use(corsMiddleware())
+	// ?force_refresh=1 or X-Force-Refresh: 1 bypasses the read-through cache.
+	router.Use(forceRefreshMiddleware())
 
 	// 健康检查
 	router.GET("/health", healthHandler)

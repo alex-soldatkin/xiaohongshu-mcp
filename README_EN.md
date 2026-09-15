@@ -537,6 +537,14 @@ and behaves exactly as before.
 | Variable | Default | Meaning |
 |---|---|---|
 | `XHS_DATABASE_URL` | unset | `postgres://user:pass@host:5432/db`; unset means no persistence |
+| `XHS_CACHE_TTL_NOTE` | `6h` | freshness window for note details, both comment levels |
+| `XHS_CACHE_TTL_PROFILE` | `6h` | another user's profile |
+| `XHS_CACHE_TTL_MY_PROFILE` | `30m` | your own profile |
+| `XHS_CACHE_TTL_FEED` | `5m` | the home feed listing |
+| `XHS_CACHE_TTL_SEARCH` | `15m` | search results |
+| `XHS_CACHE_TTL_NOTIFICATIONS` | `5m` | notification listings |
+| `XHS_CACHE_TTL_UNREAD` | `2m` | the unread counters |
+| `XHS_CACHE_RETENTION` | `720h` | how long a cached document may sit before it is swept |
 
 Set it and the server connects at startup, applies its schema migrations
 itself, and logs the URL with the password masked. A URL that is set but
@@ -548,6 +556,22 @@ understood; any other scheme is rejected rather than quietly ignored.
 The database holds a document cache keyed by account, and an append-only log of
 notifications and comments. It is scoped by the Xiaohongshu user id, so two
 accounts driven from one deployment never see each other's data.
+
+Every TTL accepts a Go duration (`90m`) or a bare number of seconds, and a zero
+switches caching off for that kind alone. The cache is consulted *before* the
+pacing gate, so a hit costs neither the 3-8 second pause between actions nor a
+request against the account's hourly read budget — which is the point: data you
+already hold should not be re-fetched, both because it is slow and because the
+re-fetch is traffic.
+
+A cached read is marked as such: responses carry `cached: true` and
+`fetched_at` when they came out of the store, and `fetched_at` alone when they
+came off the site. Neither field appears at all when no database is
+configured. To bypass the cache, pass `force_refresh: true` to any of the seven
+read tools, or add `?force_refresh=1` (or the header `X-Force-Refresh: 1`) to an
+HTTP read. A write invalidates what it could have changed before it runs, not
+after: a like drops the note it liked, a publish drops your own profile, and a
+reply in the notification centre drops the notification listings.
 
 With Docker, the database comes from an overlay file rather than the default
 compose file, because the store is optional:

@@ -58,3 +58,32 @@ func errorHandlingMiddleware() gin.HandlerFunc {
 			"服务器内部错误", recovered)
 	})
 }
+
+// forceRefreshMiddleware lets an HTTP caller bypass the read-through cache,
+// the way force_refresh does for an MCP tool call (issue #7).
+//
+// Two spellings because the read endpoints are a mix of GET and POST: a query
+// parameter is natural on a GET and does not disturb a POST body, and a header
+// works for any method and for clients that build their URLs elsewhere.
+func forceRefreshMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !truthy(c.Query("force_refresh")) && !truthy(c.GetHeader("X-Force-Refresh")) {
+			c.Next()
+			return
+		}
+
+		c.Request = c.Request.WithContext(withForceRefresh(c.Request.Context(), true))
+		c.Next()
+	}
+}
+
+// truthy accepts the usual spellings of yes. An absent value is false, and so
+// is anything unrecognised: forcing a live fetch costs a page load and the
+// account's read budget, so it happens only when it was clearly asked for.
+func truthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
