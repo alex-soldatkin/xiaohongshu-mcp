@@ -43,16 +43,17 @@ func newInteractAction(page *rod.Page) *interactAction {
 	return &interactAction{page: page}
 }
 
-func (a *interactAction) preparePage(ctx context.Context, actionType interactActionType, feedID, xsecToken string) *rod.Page {
+func (a *interactAction) preparePage(ctx context.Context, actionType interactActionType, feedID, xsecToken string) (*rod.Page, error) {
 	page := a.page.Context(ctx).Timeout(60 * time.Second)
-	url := makeFeedDetailURL(feedID, xsecToken)
+	source, referrer := feedEntryPoint(feedID)
+	url := makeFeedDetailURL(feedID, xsecToken, source)
 	logrus.Infof("Opening feed detail page for %s: %s", actionType, url)
 
-	page.MustNavigate(url)
-	page.MustWaitDOMStable()
-	humanize.Delay(ctx, humanize.AfterNavigate)
+	if err := navigateFrom(ctx, page, url, referrer, navWaitDOMStable); err != nil {
+		return nil, err
+	}
 
-	return page
+	return page, nil
 }
 
 func (a *interactAction) performClick(page *rod.Page, selector string) error {
@@ -132,7 +133,10 @@ func (a *LikeAction) perform(ctx context.Context, feedID, xsecToken string, targ
 		actionType = actionUnlike
 	}
 
-	page := a.preparePage(ctx, actionType, feedID, xsecToken)
+	page, err := a.preparePage(ctx, actionType, feedID, xsecToken)
+	if err != nil {
+		return err
+	}
 
 	liked, _, err := a.getInteractState(page, feedID)
 	if err != nil {
@@ -179,7 +183,10 @@ func (a *FavoriteAction) perform(ctx context.Context, feedID, xsecToken string, 
 		actionType = actionUnfavorite
 	}
 
-	page := a.preparePage(ctx, actionType, feedID, xsecToken)
+	page, err := a.preparePage(ctx, actionType, feedID, xsecToken)
+	if err != nil {
+		return err
+	}
 
 	_, collected, err := a.getInteractState(page, feedID)
 	if err != nil {

@@ -17,7 +17,8 @@ type FeedsListAction struct {
 func NewFeedsListAction(page *rod.Page) *FeedsListAction {
 	pp := page.Timeout(60 * time.Second)
 
-	pp.MustNavigate("https://www.xiaohongshu.com")
+	// Session entry point, not a deep link: no referrer to claim.
+	pp.MustNavigate(urlHome)
 	pp.MustWaitDOMStable()
 
 	return &FeedsListAction{page: pp}
@@ -62,5 +63,8 @@ func (f *FeedsListAction) GetFeedsList(ctx context.Context) ([]Feed, error) {
 		return nil, fmt.Errorf("failed to unmarshal feeds: %w", err)
 	}
 
-	return onlyNotes(feeds), nil
+	notes := onlyNotes(feeds)
+	noteSources.rememberFeeds(notes, xsecSourceFeed, urlExplore)
+
+	return notes, nil
 }

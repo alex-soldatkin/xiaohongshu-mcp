@@ -2,11 +2,102 @@ package xiaohongshu
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/proto"
 	"github.com/xpzouying/xiaohongshu-mcp/humanize"
 )
+
+// Fixed landing pages on the site, used both as navigation targets and as
+// referrers for the pages they link to.
+const (
+	urlHome         = "https://www.xiaohongshu.com"
+	urlExplore      = "https://www.xiaohongshu.com/explore"
+	urlNotification = "https://www.xiaohongshu.com/notification"
+)
+
+// navWait says how settled the page has to be before navigateFrom returns.
+// The levels are cumulative and mirror what each call site used to do for
+// itself with MustWaitLoad / MustWaitDOMStable / MustWaitStable.
+type navWait int
+
+const (
+	navWaitNone      navWait = iota // return as soon as the navigation is accepted
+	navWaitLoad                     // load event
+	navWaitDOMStable                // + DOM stops changing
+	navWaitStable                   // + DOM and network both quiet
+)
+
+// navigateFrom navigates page to url as though the user had followed a link on
+// referrer, then waits and pauses the way a reader would.
+//
+// This is the whole point of not using page.Navigate: Page.navigate carries a
+// referrer, and the browser turns it into both the Referer request header and
+// document.referrer on the destination. A plain page.Navigate sends neither, so
+// every deep link looks like a session that teleported to a note it could not
+// have found. Passing an empty referrer means the opposite claim — that the
+// user typed the address — so the transition type follows suit.
+//
+// Cross-origin referrers (notably to creator.xiaohongshu.com) are trimmed to
+// the bare origin by the default referrer policy. That is ordinary browser
+// behaviour, not a bug here.
+func navigateFrom(ctx context.Context, page *rod.Page, url, referrer string, wait navWait) error {
+	transition := proto.PageTransitionTypeLink
+	if referrer == "" {
+		transition = proto.PageTransitionTypeTyped
+	}
+
+	// Mirror rod's Page.Navigate: drop whatever is still loading first.
+	_ = page.StopLoading()
+
+	res, err := proto.PageNavigate{
+		URL:            url,
+		Referrer:       referrer,
+		TransitionType: transition,
+	}.Call(page)
+	if err != nil {
+		return fmt.Errorf("导航到 %s 失败: %w", url, err)
+	}
+	if res.ErrorText != "" {
+		return fmt.Errorf("导航到 %s 失败: %s", url, res.ErrorText)
+	}
+
+	// rod's Page.Navigate also drops its cached JS execution context id here,
+	// but unsetJSCtxID is unexported. It costs nothing: Page.Evaluate already
+	// retries on ErrCtxNotFound after unsetting the stale id itself, so the
+	// first eval after the document swap repairs the cache.
+	if wait >= navWaitLoad {
+		if err := page.WaitLoad(); err != nil {
+			return fmt.Errorf("等待 %s 加载失败: %w", url, err)
+		}
+	}
+
+	switch wait {
+	case navWaitDOMStable:
+		if err := page.WaitDOMStable(time.Second, 0); err != nil {
+			return fmt.Errorf("等待 %s DOM 稳定失败: %w", url, err)
+		}
+	case navWaitStable:
+		if err := page.WaitStable(time.Second); err != nil {
+			return fmt.Errorf("等待 %s 稳定失败: %w", url, err)
+		}
+	}
+
+	humanize.Delay(ctx, humanize.AfterNavigate)
+	return nil
+}
+
+// currentURL reads the current address, falling back to explore. It is only
+// ever used as a referrer, so failing to read it is not worth failing a call.
+func currentURL(page *rod.Page) string {
+	info, err := page.Info()
+	if err != nil || info.URL == "" {
+		return urlExplore
+	}
+	return info.URL
+}
 
 type NavigateAction struct {
 	page *rod.Page
@@ -19,9 +110,11 @@ func NewNavigate(page *rod.Page) *NavigateAction {
 func (n *NavigateAction) ToExplorePage(ctx context.Context) error {
 	page := n.page.Context(ctx).Timeout(60 * time.Second) // 加超时保护，避免 MustNavigate/MustWaitStable 无限挂
 
-	page.MustNavigate("https://www.xiaohongshu.com/explore").
-		MustWaitLoad().
-		MustElement(`div#app`)
+	// No referrer: explore is where a session starts, not somewhere it is linked to.
+	if err := navigateFrom(ctx, page, urlExplore, "", navWaitLoad); err != nil {
+		return err
+	}
+	page.MustElement(`div#app`)
 
 	return nil
 }

@@ -25,13 +25,14 @@ func (f *CommentFeedAction) PostComment(ctx context.Context, feedID, xsecToken, 
 	// 不使用 Context(ctx)，避免继承外部 context 的超时
 	page := f.page.Timeout(60 * time.Second)
 
-	url := makeFeedDetailURL(feedID, xsecToken)
+	source, referrer := feedEntryPoint(feedID)
+	url := makeFeedDetailURL(feedID, xsecToken, source)
 	logrus.Infof("打开 feed 详情页: %s", url)
 
 	// 导航到详情页
-	page.MustNavigate(url)
-	page.MustWaitDOMStable()
-	humanize.Delay(ctx, humanize.AfterNavigate)
+	if err := navigateFrom(ctx, page, url, referrer, navWaitDOMStable); err != nil {
+		return err
+	}
 
 	// 检测页面是否可访问
 	if err := checkPageAccessible(page); err != nil {
@@ -115,13 +116,14 @@ func (f *CommentFeedAction) ReplyToComment(ctx context.Context, feedID, xsecToke
 	// 增加超时时间，因为需要滚动查找评论
 	// 注意：不使用 Context(ctx)，避免继承外部 context 的超时
 	page := f.page.Timeout(5 * time.Minute)
-	url := makeFeedDetailURL(feedID, xsecToken)
+	source, referrer := feedEntryPoint(feedID)
+	url := makeFeedDetailURL(feedID, xsecToken, source)
 	logrus.Infof("打开 feed 详情页进行回复: %s", url)
 
 	// 导航到详情页
-	page.MustNavigate(url)
-	page.MustWaitDOMStable()
-	humanize.Delay(ctx, humanize.AfterNavigate)
+	if err := navigateFrom(ctx, page, url, referrer, navWaitDOMStable); err != nil {
+		return err
+	}
 
 	// 检测页面是否可访问
 	if err := checkPageAccessible(page); err != nil {

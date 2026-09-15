@@ -27,11 +27,17 @@ type PublishVideoContent struct {
 func NewPublishVideoAction(page *rod.Page) (*PublishAction, error) {
 	pp := page.Timeout(300 * time.Second)
 
-	if err := pp.Navigate(urlOfPublic); err != nil {
+	// The creator site is reached from the "发布" entry on the main site, so
+	// explore is the referrer. Being cross-origin, the browser trims it to the
+	// bare origin — that is the policy working, not a lost referrer.
+	//
+	// The load wait stays out here rather than inside navigateFrom: the publish
+	// page is heavy and a slow load was only ever a warning, while a refused
+	// navigation is still fatal.
+	if err := navigateFrom(pp.GetContext(), pp, urlOfPublic, urlExplore, navWaitNone); err != nil {
 		return nil, errors.Wrap(err, "导航到发布页面失败")
 	}
 
-	// 使用 WaitLoad 代替 WaitIdle（更宽松）
 	if err := pp.WaitLoad(); err != nil {
 		logrus.Warnf("等待页面加载出现问题: %v，继续尝试", err)
 	}

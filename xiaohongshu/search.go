@@ -105,10 +105,11 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 	page := s.page.Context(ctx).Timeout(60 * time.Second)
 
 	searchURL := makeSearchURL(keyword)
-	page.MustNavigate(searchURL)
-	page.MustWaitStable()
+	// A search starts on the explore page — that is where the search box lives.
+	if err := navigateFrom(ctx, page, searchURL, urlExplore, navWaitStable); err != nil {
+		return nil, err
+	}
 	page.MustWait(`() => window.__INITIAL_STATE__ !== undefined`)
-	humanize.Delay(ctx, humanize.AfterNavigate)
 
 	if len(pending) > 0 {
 		// 悬停在筛选按钮上展开面板
@@ -162,7 +163,12 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 		return nil, fmt.Errorf("failed to unmarshal feeds: %w", err)
 	}
 
-	return onlyNotes(feeds), nil
+	notes := onlyNotes(feeds)
+	// Remember where these tokens came from, so opening one of them later
+	// declares pc_search and a search-page Referer instead of claiming the feed.
+	noteSources.rememberFeeds(notes, xsecSourceSearch, currentURL(page))
+
+	return notes, nil
 }
 
 // feedIDsJS 读当前结果集的 id 列表，用来判断数据有没有换一批。

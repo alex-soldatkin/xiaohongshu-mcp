@@ -53,9 +53,11 @@ func NewUserProfileAction(page *rod.Page) *UserProfileAction {
 func (u *UserProfileAction) UserProfile(ctx context.Context, userID, xsecToken string, tab ProfileTab) (*UserProfileResponse, error) {
 	page := u.page.Context(ctx).Timeout(60 * time.Second) // 重设被 .Context 清掉的 deadline
 
-	searchURL := makeUserProfileURL(userID, xsecToken, tab)
-	page.MustNavigate(searchURL)
-	page.MustWaitStable()
+	profileURL := makeUserProfileURL(userID, xsecToken, tab)
+	// A profile is reached from the feed, where the author's name is a link.
+	if err := navigateFrom(ctx, page, profileURL, urlExplore, navWaitStable); err != nil {
+		return nil, err
+	}
 
 	return u.extractUserProfileData(page, tab)
 }
@@ -134,11 +136,14 @@ func (u *UserProfileAction) extractUserProfileData(page *rod.Page, tab ProfileTa
 		response.Feeds = append(response.Feeds, notesData.Notes[notesData.Index]...)
 	}
 
+	// Notes listed on a profile carry pc_note, not pc_feed.
+	noteSources.rememberFeeds(response.Feeds, xsecSourceNote, currentURL(page))
+
 	return response, nil
 }
 
 func makeUserProfileURL(userID, xsecToken string, tab ProfileTab) string {
-	url := fmt.Sprintf("https://www.xiaohongshu.com/user/profile/%s?xsec_token=%s&xsec_source=pc_note", userID, xsecToken)
+	url := fmt.Sprintf("https://www.xiaohongshu.com/user/profile/%s?xsec_token=%s&xsec_source=%s", userID, xsecToken, xsecSourceNote)
 	if tab != "" && tab != TabNotes {
 		url += fmt.Sprintf("&tab=%s&subTab=note", tab)
 	}

@@ -99,8 +99,9 @@ func NewNotificationAction(page *rod.Page) *NotificationAction {
 func (n *NotificationAction) UnreadCount(ctx context.Context) (*NotificationCount, error) {
 	page := n.page.Timeout(60 * time.Second)
 
-	page.MustNavigate("https://www.xiaohongshu.com/explore").MustWaitLoad()
-	humanize.Delay(ctx, humanize.AfterNavigate)
+	if err := navigateFrom(ctx, page, urlExplore, "", navWaitLoad); err != nil {
+		return nil, err
+	}
 
 	if err := page.WaitStable(time.Second); err != nil {
 		logrus.Warnf("explore 页未稳定，继续读取未读数: %v", err)
@@ -148,8 +149,10 @@ func (n *NotificationAction) List(ctx context.Context, tab NotificationTab, limi
 
 	page := n.page.Timeout(3 * time.Minute)
 
-	page.MustNavigate("https://www.xiaohongshu.com/notification").MustWaitLoad()
-	humanize.Delay(ctx, humanize.AfterNavigate)
+	// The bell that opens this page lives in the explore sidebar.
+	if err := navigateFrom(ctx, page, urlNotification, urlExplore, navWaitLoad); err != nil {
+		return nil, err
+	}
 
 	if err := n.switchTab(ctx, page, tab); err != nil {
 		return nil, err

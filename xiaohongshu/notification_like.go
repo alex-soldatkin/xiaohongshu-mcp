@@ -32,8 +32,9 @@ func (n *NotificationAction) Like(ctx context.Context, commentID string, unlike 
 	want := !unlike
 	page := n.page.Timeout(3 * time.Minute)
 
-	page.MustNavigate("https://www.xiaohongshu.com/notification").MustWaitLoad()
-	humanize.Delay(ctx, humanize.AfterNavigate)
+	if err := navigateFrom(ctx, page, urlNotification, urlExplore, navWaitLoad); err != nil {
+		return nil, err
+	}
 
 	target, index, err := n.locate(ctx, page, commentID)
 	if err != nil {
