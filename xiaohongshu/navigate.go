@@ -3,6 +3,7 @@ package xiaohongshu
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -134,25 +135,53 @@ func (n *NavigateAction) ToExplorePage(ctx context.Context) error {
 	return nil
 }
 
+// profileSidebarLink is the "我" entry in the main-site sidebar. It is the only
+// route to one's own profile that does not require knowing one's own user id,
+// which is why this action clicks rather than navigates.
+const profileSidebarLink = `div.main-container li.user.side-bar-component a.link-wrapper span.channel`
+
 func (n *NavigateAction) ToProfilePage(ctx context.Context) error {
 	page := n.page.Context(ctx).Timeout(60 * time.Second) // 加超时保护，避免 MustNavigate/MustWaitStable 无限挂
 
-	// First navigate to explore page
-	if err := n.ToExplorePage(ctx); err != nil {
-		return err
+	// Only load explore when the sidebar is not already in front of us. With a
+	// long-lived page (#6) it often is, and opening explore purely to click a
+	// link that is on screen already spends a page load for nothing.
+	if !n.sidebarIsOpen(page) {
+		if err := n.ToExplorePage(ctx); err != nil {
+			return err
+		}
 	}
 
 	page.MustWaitStable()
 
 	// Find and click the "我" channel link in sidebar
-	profileLink := page.MustElement(`div.main-container li.user.side-bar-component a.link-wrapper span.channel`)
+	profileLink := page.MustElement(profileSidebarLink)
 	humanize.Delay(ctx, humanize.BeforeClick)
 	if err := humanize.Click(profileLink); err != nil {
 		return err
 	}
 
-	// Wait for navigation to complete
+	// Wait for the click to land before touching the document: until the
+	// navigation commits, the page still answers for the sidebar we clicked
+	// from. Failing to see the profile URL is not fatal — the load wait below
+	// is the same one this action always did.
+	awaitArrival(ctx, page, func(current string) bool {
+		return strings.Contains(current, "/user/profile")
+	})
+
 	page.MustWaitLoad()
 
-	return nil
+	// Parity with navigateFrom: a challenge raised by a click is still a
+	// challenge, and must not be reported as "the selector timed out".
+	return checkRiskControl(page)
+}
+
+// sidebarIsOpen reports whether the profile entry is already on screen, meaning
+// a main-site page is open and rendered.
+func (n *NavigateAction) sidebarIsOpen(page *rod.Page) bool {
+	if !onMainSite(currentURL(page)) {
+		return false
+	}
+	has, _, err := page.Has(profileSidebarLink)
+	return err == nil && has
 }

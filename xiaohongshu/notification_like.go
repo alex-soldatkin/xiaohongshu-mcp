@@ -32,7 +32,7 @@ func (n *NotificationAction) Like(ctx context.Context, commentID string, unlike 
 	want := !unlike
 	page := n.page.Timeout(3 * time.Minute)
 
-	if err := navigateFrom(ctx, page, urlNotification, urlExplore, navWaitLoad); err != nil {
+	if err := gotoNotification(ctx, page); err != nil {
 		return nil, err
 	}
 

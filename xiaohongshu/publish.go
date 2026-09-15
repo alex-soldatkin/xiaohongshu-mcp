@@ -44,14 +44,16 @@ func NewPublishImageAction(page *rod.Page) (*PublishAction, error) {
 
 	pp := page.Timeout(300 * time.Second)
 
-	// The creator site is reached from the "发布" entry on the main site, so
-	// explore is the referrer. Being cross-origin, the browser trims it to the
-	// bare origin — that is the policy working, not a lost referrer.
+	// The creator site is reached from the "发布" entry on the main site. When
+	// that entry is on screen we click it; otherwise we navigate and name
+	// explore as the referrer. Being cross-origin, the browser trims the
+	// referrer to the bare origin — that is the policy working, not a lost
+	// referrer.
 	//
-	// The load wait stays out here rather than inside navigateFrom: the publish
-	// page is heavy and a slow load was only ever a warning, while a refused
-	// navigation is still fatal.
-	if err := navigateFrom(pp.GetContext(), pp, urlOfPublic, urlExplore, navWaitNone); err != nil {
+	// The load wait stays out here rather than inside the navigation helper:
+	// the publish page is heavy and a slow load was only ever a warning, while
+	// a refused navigation is still fatal.
+	if err := gotoCreatorPublish(pp.GetContext(), pp); err != nil {
 		return nil, errors.Wrap(err, "导航到发布页面失败")
 	}
 

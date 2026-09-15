@@ -149,8 +149,10 @@ func (n *NotificationAction) List(ctx context.Context, tab NotificationTab, limi
 
 	page := n.page.Timeout(3 * time.Minute)
 
-	// The bell that opens this page lives in the explore sidebar.
-	if err := navigateFrom(ctx, page, urlNotification, urlExplore, navWaitLoad); err != nil {
+	// The bell that opens this page lives in the sidebar: clicked when the
+	// main site is already open, navigated to with explore as the referrer
+	// otherwise.
+	if err := gotoNotification(ctx, page); err != nil {
 		return nil, err
 	}
 
@@ -166,6 +168,11 @@ func (n *NotificationAction) List(ctx context.Context, tab NotificationTab, limi
 	if err != nil {
 		return nil, err
 	}
+
+	// The notes named below are opened by a later tool call, by then possibly
+	// from this very page. Read their provenance off the site's own links while
+	// the page is still here.
+	rememberNotificationNoteLinks(page)
 
 	items, filtered := convertNotifications(payload.MessageList, limit)
 	return &NotificationList{Tab: tab, Filtered: filtered, Items: items}, nil

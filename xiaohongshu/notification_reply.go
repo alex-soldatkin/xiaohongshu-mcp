@@ -30,7 +30,7 @@ func (n *NotificationAction) Reply(ctx context.Context, commentID, content strin
 
 	page := n.page.Timeout(3 * time.Minute)
 
-	if err := navigateFrom(ctx, page, urlNotification, urlExplore, navWaitLoad); err != nil {
+	if err := gotoNotification(ctx, page); err != nil {
 		return nil, err
 	}
 
