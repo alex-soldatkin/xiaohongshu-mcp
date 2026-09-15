@@ -13,10 +13,14 @@ import (
 
 // Fixed landing pages on the site, used both as navigation targets and as
 // referrers for the pages they link to.
-const (
-	urlHome         = "https://www.xiaohongshu.com"
-	urlExplore      = "https://www.xiaohongshu.com/explore"
-	urlNotification = "https://www.xiaohongshu.com/notification"
+//
+// Vars, not consts: SetSite rewrites them at startup from the active
+// deployment profile (see site.go), which keeps every use of them a plain
+// identifier. Read-only after that.
+var (
+	urlHome         = SiteXiaohongshu.Home()
+	urlExplore      = SiteXiaohongshu.Explore()
+	urlNotification = SiteXiaohongshu.Notification()
 )
 
 // navWait says how settled the page has to be before navigateFrom returns.
@@ -41,7 +45,7 @@ const (
 // have found. Passing an empty referrer means the opposite claim — that the
 // user typed the address — so the transition type follows suit.
 //
-// Cross-origin referrers (notably to creator.xiaohongshu.com) are trimmed to
+// Cross-origin referrers (notably to the creator centre) are trimmed to
 // the bare origin by the default referrer policy. That is ordinary browser
 // behaviour, not a bug here.
 func navigateFrom(ctx context.Context, page *rod.Page, url, referrer string, wait navWait) error {

@@ -47,6 +47,11 @@ type ManagerConfig struct {
 	// Session is the cookie backup: the seed source at launch and the export
 	// target on every lease release. nil disables both.
 	Session cookies.Cookier
+	// Site is the deployment name ("xiaohongshu" / "rednote") the entry point
+	// resolved for this run. Recorded alongside the exported cookies so the
+	// next start does not have to guess from cookie domains. Empty leaves
+	// whatever the file already says.
+	Site string
 	// Lifecycle bounds how long one browser process lives.
 	Lifecycle configs.BrowserLifecycle
 }
@@ -435,6 +440,15 @@ func (m *Manager) exportLocked() error {
 	if err := m.cfg.Session.SaveCookies(data); err != nil {
 		logrus.Warnf("browser: cannot save the cookie backup: %v", err)
 		return err
+	}
+
+	// Record which deployment these cookies belong to. Best effort: a session
+	// that saved but could not be labelled is still a saved session, and the
+	// next start falls back to sniffing the domains.
+	if m.cfg.Site != "" && m.cfg.Site != m.cfg.Session.LoadSite() {
+		if err := m.cfg.Session.SaveSite(m.cfg.Site); err != nil {
+			logrus.Warnf("browser: cannot record the site in the session file: %v", err)
+		}
 	}
 
 	if m.cfg.ProfileDir == "" {

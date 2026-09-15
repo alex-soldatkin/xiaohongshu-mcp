@@ -94,6 +94,7 @@ func NewXiaohongshuService(opts ...ServiceOption) *XiaohongshuService {
 			},
 			ProfileDir: profileDir,
 			Session:    cookies.NewLoadCookie(cookies.GetCookiesFilePath()),
+			Site:       xiaohongshu.ActiveSite().Name,
 			Lifecycle:  configs.BrowserLifecycleFromEnv(),
 		}),
 	}
@@ -247,6 +248,12 @@ func (s *XiaohongshuService) DeleteCookies(ctx context.Context) error {
 	// Documents already stored stay correct because they are keyed by user id,
 	// not by the seed, which survives this reset by design.
 	s.cache.clearAccount()
+
+	// Same reasoning for the deployment: the next login targets the site this
+	// process resolved at startup, so the recreated file should say so.
+	if err := store.SaveSite(xiaohongshu.ActiveSite().Name); err != nil {
+		logrus.Warnf("重置登录后记录站点失败: %v", err)
+	}
 
 	if seed > 0 {
 		if err := store.SaveSeed(seed); err != nil {

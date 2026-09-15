@@ -507,11 +507,20 @@ func (d *riskDetector) detail(cooled time.Duration, signals []riskSignal) string
 	return b.String()
 }
 
-// cookieSessionExpected reports whether a cookie session was saved, i.e.
-// whether a login modal would be a surprise.
+// cookieSessionExpected reports whether a cookie session was saved for the
+// active deployment, i.e. whether a login modal would be a surprise.
+//
+// The domain check is the point. A saved jar for the other deployment is no
+// session at all here: every page would show the login modal, login_required
+// would fire on each navigation, the two-signal rule would trip and the pacing
+// gate would enter a 30-minute cooldown — the tool putting the account into
+// cooldown on the operator's first run.
 func cookieSessionExpected() bool {
 	data, err := cookies.NewLoadCookie(cookies.GetCookiesFilePath()).LoadCookies()
-	return err == nil && len(data) > 0
+	if err != nil {
+		return false
+	}
+	return jarHasSessionFor(data, ActiveSite())
 }
 
 // saveRiskScreenshot writes a PNG of the challenge next to the downloaded

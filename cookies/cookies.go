@@ -12,9 +12,13 @@ import (
 // sessionFile 是 v2 的文件结构。v1 是一个裸 cookie 数组，没有外层对象。
 // cookies 用 RawMessage 原样透传，不解析不重组，避免往返时字段走样。
 type sessionFile struct {
-	Version int             `json:"version"`
-	Seed    int             `json:"seed,omitempty"`
-	SavedAt string          `json:"saved_at,omitempty"`
+	Version int    `json:"version"`
+	Seed    int    `json:"seed,omitempty"`
+	SavedAt string `json:"saved_at,omitempty"`
+	// Site records which deployment (xiaohongshu / rednote) the jar belongs
+	// to, so an operator who has logged in once never has to say it again.
+	// Absent in jars written before the field existed; those are sniffed.
+	Site    string          `json:"site,omitempty"`
 	Cookies json.RawMessage `json:"cookies"`
 }
 
@@ -36,6 +40,11 @@ type Cookier interface {
 	// The persistent profile (issue #6) uses this to decide whether the file
 	// is newer than what the profile was last seeded from.
 	LoadSavedAt() time.Time
+	// LoadSite reads the deployment name recorded with the session. An older
+	// file, a missing file or a damaged one all yield "".
+	LoadSite() string
+	// SaveSite records the deployment name, preserving cookies and seed.
+	SaveSite(site string) error
 }
 
 type localCookie struct {
@@ -101,9 +110,32 @@ func (c *localCookie) LoadSavedAt() time.Time {
 	return ts
 }
 
-// SaveCookies 保存 cookies 到文件中，保留文件里已有的 seed。
+// LoadSite 读取会话绑定的站点名。老格式或未设时返回 ""。
+func (c *localCookie) LoadSite() string {
+	data, err := os.ReadFile(c.path)
+	if err != nil {
+		return ""
+	}
+
+	var f sessionFile
+	if err := json.Unmarshal(data, &f); err != nil {
+		return ""
+	}
+	return f.Site
+}
+
+// SaveSite 写入站点名，保留文件里已有的 cookies 和 seed。
+func (c *localCookie) SaveSite(site string) error {
+	cks, err := c.LoadCookies()
+	if err != nil {
+		cks = nil // 文件还不存在：先把站点落下来，cookies 之后再补
+	}
+	return c.write(cks, c.LoadSeed(), site)
+}
+
+// SaveCookies 保存 cookies 到文件中，保留文件里已有的 seed 和站点名。
 func (c *localCookie) SaveCookies(data []byte) error {
-	return c.write(data, c.LoadSeed())
+	return c.write(data, c.LoadSeed(), c.LoadSite())
 }
 
 // SaveSeed 写入 seed，保留文件里已有的 cookies。
@@ -112,11 +144,11 @@ func (c *localCookie) SaveSeed(seed int) error {
 	if err != nil {
 		cks = nil // 文件还不存在：先把 seed 落下来，cookies 之后再补
 	}
-	return c.write(cks, seed)
+	return c.write(cks, seed, c.LoadSite())
 }
 
 // write 以 v2 格式落盘。cookies 用 RawMessage 原样嵌入，不经过结构体往返。
-func (c *localCookie) write(cks []byte, seed int) error {
+func (c *localCookie) write(cks []byte, seed int, site string) error {
 	if len(cks) == 0 {
 		cks = []byte("[]")
 	}
@@ -125,6 +157,7 @@ func (c *localCookie) write(cks []byte, seed int) error {
 		Version: 2,
 		Seed:    seed,
 		SavedAt: time.Now().Format(time.RFC3339),
+		Site:    site,
 		Cookies: json.RawMessage(cks),
 	}, "", "  ")
 	if err != nil {

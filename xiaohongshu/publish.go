@@ -33,12 +33,12 @@ type PublishAction struct {
 	page *rod.Page
 }
 
-const (
-	urlOfPublic = `https://creator.xiaohongshu.com/publish/publish?source=official`
+// urlOfPublic 创作者中心的发布页。与 navigate.go 的落地页一样是 var：
+// 启动时由 SetSite 按站点写入（见 site.go），使用处保持不变。
+var urlOfPublic = SiteXiaohongshu.CreatorPublish()
 
-	// contentElemTimeout 查找正文输入框的轮询窗口
-	contentElemTimeout = 10 * time.Second
-)
+// contentElemTimeout 查找正文输入框的轮询窗口
+const contentElemTimeout = 10 * time.Second
 
 func NewPublishImageAction(page *rod.Page) (*PublishAction, error) {
 

@@ -219,3 +219,57 @@ func TestLoadSavedAt(t *testing.T) {
 		assert.Equal(t, first.Format(time.RFC3339), store.LoadSavedAt().Format(time.RFC3339))
 	})
 }
+
+// TestSite covers the site field: recorded once, preserved by every other
+// write, and absent in the files written before it existed (issue #18).
+func TestSite(t *testing.T) {
+	t.Run("存站点后读得回来，且不冲掉 cookies 与 seed", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cookies.json")
+		c := NewLoadCookie(path)
+
+		raw := []byte(`[{"name":"web_session","value":"x","domain":".rednote.com"}]`)
+		assert.NoError(t, c.SaveCookies(raw))
+		assert.NoError(t, c.SaveSeed(23088))
+		assert.NoError(t, c.SaveSite("rednote"))
+
+		assert.Equal(t, "rednote", c.LoadSite())
+		assert.Equal(t, 23088, c.LoadSeed())
+		got, err := c.LoadCookies()
+		assert.NoError(t, err)
+		assert.Equal(t, decodeJSON(t, raw), decodeJSON(t, got))
+	})
+
+	t.Run("重新导出 cookies 不冲掉站点", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cookies.json")
+		c := NewLoadCookie(path)
+
+		assert.NoError(t, c.SaveSite("rednote"))
+		assert.NoError(t, c.SaveCookies([]byte(`[{"name":"web_session","value":"new"}]`)))
+		assert.NoError(t, c.SaveSeed(1))
+
+		assert.Equal(t, "rednote", c.LoadSite())
+	})
+
+	t.Run("老文件与损坏文件读站点返回空", func(t *testing.T) {
+		dir := t.TempDir()
+
+		v1 := filepath.Join(dir, "v1.json")
+		assert.NoError(t, os.WriteFile(v1, []byte(`[{"name":"web_session"}]`), 0644))
+		assert.Equal(t, "", NewLoadCookie(v1).LoadSite())
+
+		broken := filepath.Join(dir, "broken.json")
+		assert.NoError(t, os.WriteFile(broken, []byte(`{"version":2,"site":`), 0644))
+		assert.Equal(t, "", NewLoadCookie(broken).LoadSite())
+
+		assert.Equal(t, "", NewLoadCookie(filepath.Join(dir, "nope.json")).LoadSite())
+	})
+
+	t.Run("没有站点时不写出 site 字段", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "cookies.json")
+		assert.NoError(t, NewLoadCookie(path).SaveCookies([]byte(`[]`)))
+
+		data, err := os.ReadFile(path)
+		assert.NoError(t, err)
+		assert.NotContains(t, string(data), `"site"`)
+	})
+}

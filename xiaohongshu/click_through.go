@@ -98,7 +98,7 @@ type clickTarget struct {
 // and being already on one is the precondition for clicking rather than
 // navigating.
 func onMainSite(current string) bool {
-	return strings.HasPrefix(current, urlHome+"/")
+	return ActiveSite().OnMainSite(current)
 }
 
 // notificationTarget is the notification centre, reached in a real session by
@@ -137,8 +137,8 @@ func creatorPublishTarget() clickTarget {
 			`div.main-container li.side-bar-component a`,
 			`div.main-container a`,
 		},
-		accept:  func(href string) bool { return strings.Contains(href, "creator.xiaohongshu.com") },
-		arrived: func(current string) bool { return strings.Contains(current, "creator.xiaohongshu.com") },
+		accept:  func(href string) bool { return ActiveSite().OnCreatorSite(href) },
+		arrived: func(current string) bool { return ActiveSite().OnCreatorSite(current) },
 	}
 }
 

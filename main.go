@@ -10,6 +10,7 @@ import (
 	"github.com/xpzouying/xiaohongshu-mcp/configs"
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
 	"github.com/xpzouying/xiaohongshu-mcp/pkg/store"
+	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
 
 	// Linked for its side effect: it registers the postgres:// and
 	// postgresql:// schemes with store.Open. Nothing here calls into it.
@@ -43,13 +44,30 @@ func main() {
 	logrus.Infof("using browser binary: %s", binPath)
 
 	configs.InitHeadless(headless)
+
+	session := cookies.NewLoadCookie(cookies.GetCookiesFilePath())
+
+	// Which deployment this process talks to, resolved exactly once: the
+	// session file can be deleted at runtime by reset login, and re-resolving
+	// afterwards would silently switch sites mid-run. A disagreement between
+	// an explicit XHS_SITE and the saved cookies is fatal on purpose — the
+	// tool cannot work in that state, and carrying on would trip the risk
+	// detector into a cooldown on the first navigation (issue #18).
+	site, reason, err := xiaohongshu.ResolveSite("", session)
+	if err != nil {
+		logrus.Fatalf("%v", err)
+	}
+	xiaohongshu.SetSite(site)
+	logrus.Infof("site: %s (%s), %s", site.Name, site.Domain, reason)
+
 	// 入口层解析出 seed 和代理，经 configs 透传给浏览器工厂。
 	// seed 取值：环境变量 > 会话文件 > 新生成并写回，保证同一账号每次启动一致。
-	configs.SetFingerprintSeed(configs.ResolveFingerprintSeed(
-		cookies.NewLoadCookie(cookies.GetCookiesFilePath())))
+	configs.SetFingerprintSeed(configs.ResolveFingerprintSeed(session))
 	configs.SetProxy(configs.ProxyFromEnv())
-	// 时区独立于宿主机：默认 Asia/Shanghai，XHS_TIMEZONE 可覆盖（issue #2）。
-	configs.SetTimezone(configs.TimezoneFromEnv())
+	// 时区独立于宿主机（issue #2）。XHS_TIMEZONE 优先；未设时用站点的默认值：
+	// 国内站仍是 Asia/Shanghai，海外站跟随运维所在时区——海外账号、海外出口
+	// IP 却自报上海，是同一种不自洽，只是符号反了（issue #18）。
+	configs.SetTimezone(resolveTimezone(site))
 
 	// Persistence layer (issue #7). XHS_DATABASE_URL unset is the default
 	// deployment: store.Open returns a no-op store and behaviour is unchanged.
@@ -73,4 +91,21 @@ func main() {
 	if err := appServer.Start(port); err != nil {
 		logrus.Fatalf("failed to run server: %v", err)
 	}
+}
+
+// resolveTimezone picks the browser timezone: XHS_TIMEZONE if the operator set
+// one, otherwise the active site's default. An empty result means "no
+// opinion", which the browser layer turns into its own default rather than
+// into the host zone.
+func resolveTimezone(site xiaohongshu.Site) string {
+	if tz := configs.TimezoneFromEnv(); tz != "" {
+		return tz
+	}
+	tz := site.BrowserTimezone()
+	if tz == "" {
+		logrus.Warnf("timezone: %s wants the host zone but the host cannot name it; falling back to the browser default", site.Name)
+		return ""
+	}
+	logrus.Infof("timezone: %s (default for %s)", tz, site.Name)
+	return tz
 }
