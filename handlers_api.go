@@ -1,10 +1,12 @@
 package main
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
+	myerrors "github.com/xpzouying/xiaohongshu-mcp/errors"
 	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +32,30 @@ func respondError(c *gin.Context, statusCode int, code, message string, details 
 	c.JSON(statusCode, response)
 }
 
+// respondServiceError maps a service-layer error to an HTTP response.
+//
+// The pacing gate refuses work with *errors.ErrRateLimited; that is a 429 with
+// a Retry-After header, not a 500 — the caller did nothing wrong and should try
+// again later. Everything else stays a 500 with the handler's own code.
+func respondServiceError(c *gin.Context, code, message string, err error) {
+	if rl, ok := myerrors.AsRateLimited(err); ok {
+		retry := int(math.Ceil(rl.RetryAfter.Seconds()))
+		if retry < 1 {
+			retry = 1
+		}
+		c.Header("Retry-After", strconv.Itoa(retry))
+		respondError(c, http.StatusTooManyRequests, "RATE_LIMITED",
+			"操作被本地限流拦截，请稍后重试", map[string]any{
+				"reason":      rl.Reason,
+				"class":       rl.Class,
+				"retry_after": retry,
+			})
+		return
+	}
+
+	respondError(c, http.StatusInternalServerError, code, message, err.Error())
+}
+
 // respondSuccess 返回成功响应
 func respondSuccess(c *gin.Context, data any, message string) {
 	response := SuccessResponse{
@@ -47,8 +73,8 @@ func respondSuccess(c *gin.Context, data any, message string) {
 func (s *AppServer) checkLoginStatusHandler(c *gin.Context) {
 	status, err := s.xiaohongshuService.CheckLoginStatus(c.Request.Context())
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "STATUS_CHECK_FAILED",
-			"检查登录状态失败", err.Error())
+		respondServiceError(c, "STATUS_CHECK_FAILED",
+			"检查登录状态失败", err)
 		return
 	}
 
@@ -60,8 +86,8 @@ func (s *AppServer) checkLoginStatusHandler(c *gin.Context) {
 func (s *AppServer) getLoginQrcodeHandler(c *gin.Context) {
 	result, err := s.xiaohongshuService.GetLoginQrcode(c.Request.Context())
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "STATUS_CHECK_FAILED",
-			"获取登录二维码失败", err.Error())
+		respondServiceError(c, "STATUS_CHECK_FAILED",
+			"获取登录二维码失败", err)
 		return
 	}
 
@@ -72,8 +98,8 @@ func (s *AppServer) getLoginQrcodeHandler(c *gin.Context) {
 func (s *AppServer) deleteCookiesHandler(c *gin.Context) {
 	err := s.xiaohongshuService.DeleteCookies(c.Request.Context())
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "DELETE_COOKIES_FAILED",
-			"删除 cookies 失败", err.Error())
+		respondServiceError(c, "DELETE_COOKIES_FAILED",
+			"删除 cookies 失败", err)
 		return
 	}
 
@@ -95,8 +121,8 @@ func (s *AppServer) publishHandler(c *gin.Context) {
 
 	result, err := s.xiaohongshuService.PublishContent(c.Request.Context(), &req)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "PUBLISH_FAILED",
-			"发布失败", err.Error())
+		respondServiceError(c, "PUBLISH_FAILED",
+			"发布失败", err)
 		return
 	}
 
@@ -114,8 +140,8 @@ func (s *AppServer) publishVideoHandler(c *gin.Context) {
 
 	result, err := s.xiaohongshuService.PublishVideo(c.Request.Context(), &req)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "PUBLISH_VIDEO_FAILED",
-			"视频发布失败", err.Error())
+		respondServiceError(c, "PUBLISH_VIDEO_FAILED",
+			"视频发布失败", err)
 		return
 	}
 
@@ -126,8 +152,8 @@ func (s *AppServer) publishVideoHandler(c *gin.Context) {
 func (s *AppServer) listFeedsHandler(c *gin.Context) {
 	result, err := s.xiaohongshuService.ListFeeds(c.Request.Context())
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "LIST_FEEDS_FAILED",
-			"获取Feeds列表失败", err.Error())
+		respondServiceError(c, "LIST_FEEDS_FAILED",
+			"获取Feeds列表失败", err)
 		return
 	}
 
@@ -162,8 +188,8 @@ func (s *AppServer) searchFeedsHandler(c *gin.Context) {
 
 	result, err := s.xiaohongshuService.SearchFeeds(c.Request.Context(), keyword, filters)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "SEARCH_FEEDS_FAILED",
-			"搜索Feeds失败", err.Error())
+		respondServiceError(c, "SEARCH_FEEDS_FAILED",
+			"搜索Feeds失败", err)
 		return
 	}
 
@@ -195,8 +221,8 @@ func (s *AppServer) getFeedDetailHandler(c *gin.Context) {
 	}
 
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "GET_FEED_DETAIL_FAILED",
-			"获取Feed详情失败", err.Error())
+		respondServiceError(c, "GET_FEED_DETAIL_FAILED",
+			"获取Feed详情失败", err)
 		return
 	}
 
@@ -214,8 +240,8 @@ func (s *AppServer) userProfileHandler(c *gin.Context) {
 
 	result, err := s.xiaohongshuService.UserProfile(c.Request.Context(), req.UserID, req.XsecToken, req.Tab)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "GET_USER_PROFILE_FAILED",
-			"获取用户主页失败", err.Error())
+		respondServiceError(c, "GET_USER_PROFILE_FAILED",
+			"获取用户主页失败", err)
 		return
 	}
 
@@ -234,8 +260,8 @@ func (s *AppServer) postCommentHandler(c *gin.Context) {
 	// 发表评论
 	result, err := s.xiaohongshuService.PostCommentToFeed(c.Request.Context(), req.FeedID, req.XsecToken, req.Content)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "POST_COMMENT_FAILED",
-			"发表评论失败", err.Error())
+		respondServiceError(c, "POST_COMMENT_FAILED",
+			"发表评论失败", err)
 		return
 	}
 
@@ -253,8 +279,8 @@ func (s *AppServer) replyCommentHandler(c *gin.Context) {
 
 	result, err := s.xiaohongshuService.ReplyCommentToFeed(c.Request.Context(), req.FeedID, req.XsecToken, req.CommentID, req.UserID, req.Content)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "REPLY_COMMENT_FAILED",
-			"回复评论失败", err.Error())
+		respondServiceError(c, "REPLY_COMMENT_FAILED",
+			"回复评论失败", err)
 		return
 	}
 
@@ -278,8 +304,8 @@ func (s *AppServer) likeFeedHandler(c *gin.Context) {
 		result, err = s.xiaohongshuService.LikeFeed(c.Request.Context(), req.FeedID, req.XsecToken)
 	}
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "LIKE_FEED_FAILED",
-			"点赞操作失败", err.Error())
+		respondServiceError(c, "LIKE_FEED_FAILED",
+			"点赞操作失败", err)
 		return
 	}
 
@@ -303,8 +329,8 @@ func (s *AppServer) favoriteFeedHandler(c *gin.Context) {
 		result, err = s.xiaohongshuService.FavoriteFeed(c.Request.Context(), req.FeedID, req.XsecToken)
 	}
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "FAVORITE_FEED_FAILED",
-			"收藏操作失败", err.Error())
+		respondServiceError(c, "FAVORITE_FEED_FAILED",
+			"收藏操作失败", err)
 		return
 	}
 
@@ -327,8 +353,8 @@ func (s *AppServer) myProfileHandler(c *gin.Context) {
 	// 获取当前登录用户信息
 	result, err := s.xiaohongshuService.GetMyProfile(c.Request.Context(), c.Query("tab"))
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "GET_MY_PROFILE_FAILED",
-			"获取我的主页失败", err.Error())
+		respondServiceError(c, "GET_MY_PROFILE_FAILED",
+			"获取我的主页失败", err)
 		return
 	}
 
@@ -339,8 +365,8 @@ func (s *AppServer) myProfileHandler(c *gin.Context) {
 func (s *AppServer) getUnreadCountHandler(c *gin.Context) {
 	result, err := s.xiaohongshuService.GetUnreadCount(c.Request.Context())
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "GET_UNREAD_COUNT_FAILED",
-			"获取未读数失败", err.Error())
+		respondServiceError(c, "GET_UNREAD_COUNT_FAILED",
+			"获取未读数失败", err)
 		return
 	}
 
@@ -366,8 +392,8 @@ func (s *AppServer) listNotificationsHandler(c *gin.Context) {
 
 	result, err := s.xiaohongshuService.ListNotifications(c.Request.Context(), req.Tab, req.Limit)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "LIST_NOTIFICATIONS_FAILED",
-			"获取通知列表失败", err.Error())
+		respondServiceError(c, "LIST_NOTIFICATIONS_FAILED",
+			"获取通知列表失败", err)
 		return
 	}
 
@@ -385,8 +411,8 @@ func (s *AppServer) replyNotificationHandler(c *gin.Context) {
 
 	result, err := s.xiaohongshuService.ReplyNotification(c.Request.Context(), req.CommentID, req.Content)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "REPLY_NOTIFICATION_FAILED",
-			"回复通知失败", err.Error())
+		respondServiceError(c, "REPLY_NOTIFICATION_FAILED",
+			"回复通知失败", err)
 		return
 	}
 
@@ -404,8 +430,8 @@ func (s *AppServer) likeNotificationHandler(c *gin.Context) {
 
 	result, err := s.xiaohongshuService.LikeNotification(c.Request.Context(), req.CommentID, req.Unlike)
 	if err != nil {
-		respondError(c, http.StatusInternalServerError, "LIKE_NOTIFICATION_FAILED",
-			"点赞失败", err.Error())
+		respondServiceError(c, "LIKE_NOTIFICATION_FAILED",
+			"点赞失败", err)
 		return
 	}
 

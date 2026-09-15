@@ -40,3 +40,21 @@ func (l *loginSessions) finish(seq uint64) {
 		l.cancel = nil
 	}
 }
+
+// cancelCurrent ends the pending scan session, if any, without registering a
+// new one. GetLoginQrcode calls it before queueing for the pacing gate: the
+// pending session owns the single browser slot for as long as it waits, so a
+// replacement request has to pre-empt it first or the two would wait on each
+// other. start still cancels whatever it finds, so the ordering rule is
+// unchanged — this only moves the cancellation earlier.
+func (l *loginSessions) cancelCurrent() {
+	l.mu.Lock()
+	cancel := l.cancel
+	l.cancel = nil
+	l.mu.Unlock()
+
+	// 放到锁外调用，理由同 start
+	if cancel != nil {
+		cancel()
+	}
+}

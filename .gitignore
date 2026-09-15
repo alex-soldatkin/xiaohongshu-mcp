@@ -42,6 +42,9 @@ test_*.sh
 
 # Cookies files (contain sensitive login information)
 cookies.json
+
+# Pacing counters (written next to the session file)
+pacing_state.json
 docker/data/
 docker/images/
 docker/docker-compose.override.yml
