@@ -173,6 +173,6 @@ func (p *PublishAction) submitPublishVideo(ctx context.Context, page *rod.Page, 
 		return err
 	}
 
-	// 校验发布真的成功（成功跳转离开发布页），未跳转判失败——消除假成功
-	return waitPublishSuccess(page, 15*time.Second)
+	// 校验发布真的成功：跳转、成功提示、表单被收起，三个信号任一为准（issue #8）。
+	return waitPublishSuccess(page, 30*time.Second)
 }

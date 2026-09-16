@@ -439,25 +439,10 @@ func (p *PublishAction) submitPublish(ctx context.Context, page *rod.Page, c Pub
 		return err
 	}
 
-	// 校验发布真的成功：成功后创作平台会跳转离开发布页；未跳转则判定失败，
-	// 消除"点了发布按钮就算成功"的假阳性。
-	return waitPublishSuccess(page, 15*time.Second)
-}
-
-// waitPublishSuccess 轮询等待发布成功的信号：小红书发布成功后会跳转离开发布表单页
-// （URL 不再含 /publish/publish）。超时仍未跳转 → 判定发布失败。
-func waitPublishSuccess(page *rod.Page, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for {
-		if info, err := page.Info(); err == nil && !strings.Contains(info.URL, "/publish/publish") {
-			slog.Info("发布成功，已跳转离开发布页", "url", info.URL)
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return errors.New("发布未确认成功：点击发布后未跳转离开发布页（可能校验未过或被拦截）")
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
+	// 校验发布真的成功：跳转、成功提示、表单被收起，三个信号任一为准（issue #8）。
+	// 只看跳转会把海外站的成功发布判成失败，而失败的自然反应是重试 —— 同一篇笔记
+	// 会被发第二次。
+	return waitPublishSuccess(page, 30*time.Second)
 }
 
 type publishButton struct {
@@ -544,6 +529,23 @@ func findPublishButton(page *rod.Page) (*publishButton, string, error) {
 			return &publishButton{elem: widget, isWidget: true}, "新版发布按钮不可点击", nil
 		}
 
+		// 组件的内容在 closed shadow root 里，页面脚本看不见（issue #16）。
+		// 用 CDP 走进去拿到真正的按钮，而不是按比例猜坐标。标签取组件自己的
+		// submit-text，不硬编码中文文案。
+		label := ""
+		if v, err := widget.Attribute("submit-text"); err == nil && v != nil {
+			label = strings.TrimSpace(*v)
+		}
+		btn, err := findShadowPublishButton(page, widget, label)
+		if err != nil {
+			return nil, "", err
+		}
+		if btn != nil {
+			return &publishButton{elem: btn}, "", nil
+		}
+
+		// 兜底：进不去 shadow root 时仍按坐标点击组件，但这是最后手段。
+		slog.Warn("未能在 shadow DOM 中定位发布按钮，退回坐标点击", "submit_text", label)
 		return &publishButton{elem: widget, isWidget: true}, "", nil
 	}
 
