@@ -209,7 +209,8 @@ func sha256File(path string) (string, error) {
 // reaching the network.
 var fetchCDNSHA = fetchExpectedSHA
 
-// fetchExpectedSHA 下载同目录的 SHA256SUMS，取出 asset 的哈希。
+// fetchExpectedSHA downloads the SHA256SUMS file sitting next to the archive
+// and pulls out the hash for asset.
 func fetchExpectedSHA(asset string) (string, error) {
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Get(browserURL("SHA256SUMS"))
 	if err != nil {

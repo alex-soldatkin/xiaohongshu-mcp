@@ -157,10 +157,12 @@ func TestMCPAcceptsConfiguredBearerToken(t *testing.T) {
 	assert.Equal(t, http.StatusOK, recorder.Code)
 }
 
-// TestDeleteToolHiddenByDefault 固定删除工具的暴露闸门（issue #20）。
+// TestDeleteToolHiddenByDefault pins the exposure gate on the delete tool
+// (issue #20).
 //
-// 重点是"不在 schema 里"，而不是"调用时报错"：模型看不到的工具不会被选中，
-// 这比运行时拒绝早一步。
+// What matters is that it is absent from the schema, not that calling it fails:
+// a tool the model cannot see will not be chosen, which comes one step earlier
+// than a runtime refusal.
 func TestDeleteToolHiddenByDefault(t *testing.T) {
 	assert.False(t, mcpToolNames(t).delete, "默认不应注册 delete_note")
 
@@ -205,7 +207,8 @@ func mcpToolNames(t *testing.T) toolPresence {
 	return got
 }
 
-// 路由始终注册，闸门在 handler 里（未启用时 403）。
+// The route is always registered; the gate lives in the handler, which answers
+// 403 while the capability is off.
 func TestDeleteRouteRegistered(t *testing.T) {
 	router := setupRoutes(NewAppServer(NewXiaohongshuService(), ""))
 

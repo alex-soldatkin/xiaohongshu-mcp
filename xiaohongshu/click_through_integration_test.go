@@ -1,7 +1,8 @@
 //go:build integration
 
-// 集成测试：起浏览器 + 本地 HTTP 服务，默认 go test 不编译不运行。
-// 手动跑：GOARCH=arm64 go test -tags integration ./xiaohongshu/ -run TestClickThrough
+// Integration test: launches a browser plus a local HTTP server. A plain go
+// test neither builds nor runs it.
+// Run it by hand: GOARCH=arm64 go test -tags integration ./xiaohongshu/ -run TestClickThrough
 package xiaohongshu
 
 import (
@@ -50,7 +51,8 @@ func newSiteRecorder(t *testing.T) *siteRecorder {
 	return s
 }
 
-// referer 返回到达 path 的那次文档请求上的 Referer；没请求过就是测试跑歪了。
+// referer returns the Referer carried by the document request that reached
+// path. If no such request was made, the test itself went off the rails.
 func (s *siteRecorder) referer(t *testing.T, path string) string {
 	t.Helper()
 

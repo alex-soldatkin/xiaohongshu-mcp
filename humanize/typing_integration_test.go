@@ -17,8 +17,8 @@ import (
 	"github.com/xpzouying/xiaohongshu-mcp/browser"
 )
 
-// 三种目标元素：publish 是 tiptap contenteditable，notification_reply 是 textarea，
-// 搜索框和日期框是 input。
+// Three kinds of target element: publish is a tiptap contenteditable,
+// notification_reply is a textarea, and the search and date boxes are inputs.
 const typeFixtureHTML = `<!doctype html>
 <meta charset="utf-8">
 <body>
@@ -54,7 +54,8 @@ func openTypeFixture(t *testing.T, b *rod.Browser) *rod.Page {
 	t.Helper()
 
 	page := b.MustPage().Timeout(60 * time.Second)
-	// data: URL 当 fixture，不落文件。显式超时，免得导航卡死时空等。
+	// A data: URL serves as the fixture, so nothing is written to disk. The
+	// explicit timeout avoids waiting forever if navigation hangs.
 	if err := page.Navigate("data:text/html;charset=utf-8," + url.PathEscape(typeFixtureHTML)); err != nil {
 		t.Fatalf("加载 fixture 失败: %v", err)
 	}
@@ -64,7 +65,8 @@ func openTypeFixture(t *testing.T, b *rod.Browser) *rod.Page {
 	return page
 }
 
-// drain 取回并清空事件缓冲，只保留目标元素上的事件。
+// drain fetches and clears the event buffer, keeping only the events raised on
+// the target element.
 func drain(t *testing.T, page *rod.Page, target string) []typedEvent {
 	t.Helper()
 
@@ -102,14 +104,15 @@ func fieldText(t *testing.T, page *rod.Page, sel string) string {
 		return e.value !== undefined ? e.value : e.textContent;
 	}`, sel).Str()
 
-	// contenteditable 里行尾空格会变成 &nbsp;，那是浏览器行为不是输入错误。
+	// Inside a contenteditable a trailing space becomes &nbsp;. That is browser
+	// behaviour, not a typing error.
 	return strings.ReplaceAll(got, "\u00a0", " ")
 }
 
 type expectation struct {
-	ascii   int // ASCII 可打印字符数
-	cjk     int // 走 IME 的字符数
-	literal int // 走 insertText 的字素簇数（emoji 等）
+	ascii   int // number of printable ASCII characters
+	cjk     int // number of characters that go through the IME
+	literal int // number of grapheme clusters sent via insertText (emoji, etc.)
 }
 
 func expect(text string) expectation {
@@ -162,7 +165,8 @@ func checkStream(t *testing.T, label string, evs []typedEvent, want expectation)
 
 	c := tallyTypes(evs)
 
-	// 1. ASCII：每个字符一对 keydown/keyup，一次 keypress，一次 insertText。
+	// 1. ASCII: one keydown/keyup pair, one keypress and one insertText per
+	//    character.
 	if c["keydown:key"] != want.ascii {
 		t.Errorf("%s: ASCII keydown %d 次，期望 %d 次", label, c["keydown:key"], want.ascii)
 	}
@@ -173,8 +177,8 @@ func checkStream(t *testing.T, label string, evs []typedEvent, want expectation)
 		t.Errorf("%s: keypress %d 次，期望 %d 次", label, c["keypress"], want.ascii)
 	}
 
-	// 2. insertText 型 input：ASCII 字符 + emoji 字素簇，一个不多一个不少。
-	//    多一次就是重复插入。
+	// 2. insertText-kind input events: ASCII characters plus emoji grapheme
+	//    clusters, no more and no fewer. One extra means a duplicated insert.
 	wantInsert := want.ascii + want.literal
 	if c["input:insertText"] != wantInsert {
 		t.Errorf("%s: insertText 型 input %d 次，期望 %d 次（多出即重复插入）",
@@ -191,7 +195,8 @@ func checkStream(t *testing.T, label string, evs []typedEvent, want expectation)
 		return
 	}
 
-	// 3. 每个提交块一次 compositionstart / compositionend。块长 1-4 字，随机。
+	// 3. One compositionstart / compositionend per committed chunk. Chunks are
+	//    1-4 characters long, chosen at random.
 	starts, ends := c["compositionstart"], c["compositionend"]
 	if starts != ends {
 		t.Errorf("%s: compositionstart %d 次，compositionend %d 次，不配对", label, starts, ends)
@@ -201,7 +206,8 @@ func checkStream(t *testing.T, label string, evs []typedEvent, want expectation)
 		t.Errorf("%s: %d 个中文字分成 %d 个提交块，超出 [%d,%d]", label, want.cjk, starts, minChunks, want.cjk)
 	}
 
-	// 4. 每个字一次候选更新，每次提交再一次 —— 提交没有额外插入一遍。
+	// 4. One candidate update per character plus one per commit; the commit does
+	//    not insert the text a second time.
 	wantUpdates := want.cjk + starts
 	if c["compositionupdate"] != wantUpdates {
 		t.Errorf("%s: compositionupdate %d 次，期望 %d 次", label, c["compositionupdate"], wantUpdates)
@@ -211,7 +217,7 @@ func checkStream(t *testing.T, label string, evs []typedEvent, want expectation)
 			label, c["input:insertCompositionText"], wantUpdates)
 	}
 
-	// 5. 每次 compositionstart 之前必须有 keyCode 229 的按键。
+	// 5. Every compositionstart must be preceded by a key event with keyCode 229.
 	pending := 0
 	for _, e := range evs {
 		switch {
@@ -279,8 +285,9 @@ func TestTypeEventStream(t *testing.T) {
 	}
 }
 
-// 空闲时不应有任何残留事件：229 按键若带 NativeVirtualKeyCode，
-// 这台浏览器会陷入每秒几千次的自动重复。
+// No stray events should remain while idle: if the 229 key carries a
+// NativeVirtualKeyCode, this browser falls into an auto-repeat storm of several
+// thousand events per second.
 func TestTypeNoAutoRepeatStorm(t *testing.T) {
 	bin, err := browser.EnsureBrowser()
 	if err != nil {
@@ -309,7 +316,7 @@ func TestTypeNoAutoRepeatStorm(t *testing.T) {
 	}
 }
 
-// ctx 取消必须立刻中断输入。
+// Cancelling ctx must interrupt typing immediately.
 func TestTypeContextCancel(t *testing.T) {
 	bin, err := browser.EnsureBrowser()
 	if err != nil {

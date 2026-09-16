@@ -6,9 +6,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestDeriveGeometry_Sane 每个 seed 派生出的窗口都必须物理上可能：
-// inner <= screen，avail < screen（系统栏），inner < avail（浏览器自身 UI）。
-// 这正是 issue #1 里那三条互相矛盾的观测的反面。
+// TestDeriveGeometry_Sane every window derived from a seed must be physically
+// possible: inner <= screen, avail < screen (system bar), inner < avail (the
+// browser's own UI). This is the inverse of the three mutually contradictory
+// observations recorded in issue #1.
 func TestDeriveGeometry_Sane(t *testing.T) {
 	for _, platform := range []string{"macos", "windows"} {
 		for seed := 0; seed < 500; seed++ {
@@ -23,8 +24,9 @@ func TestDeriveGeometry_Sane(t *testing.T) {
 	}
 }
 
-// TestDeriveGeometry_DPRMatchesPlatform DPR 必须与 fingerprint-platform 自洽：
-// MacIntel 画像报 devicePixelRatio=1 是 Retina 时代不存在的机器（issue #1）。
+// TestDeriveGeometry_DPRMatchesPlatform the DPR must be consistent with the
+// fingerprint platform: a MacIntel profile reporting devicePixelRatio=1 is a
+// machine that does not exist in the Retina era (issue #1).
 func TestDeriveGeometry_DPRMatchesPlatform(t *testing.T) {
 	for seed := 0; seed < 500; seed++ {
 		assert.Equalf(t, float64(2), deriveGeometry(seed, "macos").dpr, "macos seed=%d", seed)
@@ -34,25 +36,29 @@ func TestDeriveGeometry_DPRMatchesPlatform(t *testing.T) {
 	}
 }
 
-// TestDeriveGeometry_StablePerSeed 同一账号每次启动同一块屏幕。
+// TestDeriveGeometry_StablePerSeed the same account gets the same screen on
+// every launch.
 func TestDeriveGeometry_StablePerSeed(t *testing.T) {
 	for _, seed := range []int{1, 98759, 1 << 30} {
 		assert.Equal(t, deriveGeometry(seed, "macos"), deriveGeometry(seed, "macos"))
 	}
 }
 
-// TestDeriveGeometry_VariesBySeed 不同账号不得共用同一套几何：
-// 固定常量会让所有账号看起来是同一台机器。
+// TestDeriveGeometry_VariesBySeed different accounts must not share one
+// geometry: fixed constants would make every account look like the same
+// machine.
 func TestDeriveGeometry_VariesBySeed(t *testing.T) {
 	seen := map[geometry]bool{}
 	for seed := 1; seed <= 2000; seed++ {
 		seen[deriveGeometry(seed, "macos")] = true
 	}
-	// 5 张分辨率表 x 45 档 chrome 高度 x 50 档 Dock 预留，不同值应远多于 1 个。
+	// 5 resolution tables x 45 chrome heights x 50 Dock reservations, so the
+	// number of distinct values should be far greater than one.
 	assert.Greater(t, len(seen), 50, "geometry barely varies across seeds")
 }
 
-// TestPickScreen_RespectsWeights 加权表要真的按权重分布，而不是永远命中第一项。
+// TestPickScreen_RespectsWeights the weighted table must really distribute by
+// weight instead of always hitting the first entry.
 func TestPickScreen_RespectsWeights(t *testing.T) {
 	counts := map[int]int{}
 	for h := 0; h < 10000; h++ {
@@ -62,8 +68,9 @@ func TestPickScreen_RespectsWeights(t *testing.T) {
 	assert.Greater(t, counts[1512], counts[1280], "weights not respected")
 }
 
-// TestSeedHash_SaltSeparatesFields 同一 seed 下不同字段必须独立取值，
-// 否则屏幕尺寸和 chrome 高度会在所有账号之间同步变化。
+// TestSeedHash_SaltSeparatesFields different fields under the same seed must
+// vary independently, otherwise screen size and chrome height would change in
+// lockstep across every account.
 func TestSeedHash_SaltSeparatesFields(t *testing.T) {
 	assert.NotEqual(t, seedHash(98759, "screen"), seedHash(98759, "chrome"))
 	assert.Equal(t, seedHash(98759, "screen"), seedHash(98759, "screen"))

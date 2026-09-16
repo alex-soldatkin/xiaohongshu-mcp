@@ -64,9 +64,11 @@ func main() {
 	// seed 取值：环境变量 > 会话文件 > 新生成并写回，保证同一账号每次启动一致。
 	configs.SetFingerprintSeed(configs.ResolveFingerprintSeed(session))
 	configs.SetProxy(configs.ProxyFromEnv())
-	// 时区独立于宿主机（issue #2）。XHS_TIMEZONE 优先；未设时用站点的默认值：
-	// 国内站仍是 Asia/Shanghai，海外站跟随运维所在时区——海外账号、海外出口
-	// IP 却自报上海，是同一种不自洽，只是符号反了（issue #18）。
+	// The time zone is independent of the host (issue #2). XHS_TIMEZONE wins; when
+	// unset the site's own default applies: the CN deployment stays on
+	// Asia/Shanghai, while the overseas one follows wherever it is operated from --
+	// an overseas account on an overseas exit IP reporting Shanghai is the same
+	// inconsistency with the sign flipped (issue #18).
 	configs.SetTimezone(resolveTimezone(site))
 
 	// Persistence layer (issue #7). XHS_DATABASE_URL unset is the default

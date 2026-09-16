@@ -85,8 +85,9 @@ func TestPublishRequestBindsSaveAsDraft(t *testing.T) {
 	}
 }
 
-// TestDeleteNoteGatedByEnv 固定删除能力的三道闸门（issue #20）：
-// 默认关闭、MCP 工具不注册、HTTP 路由返回 403 而不是真去点页面。
+// TestDeleteNoteGatedByEnv pins the three gates on the delete capability
+// (issue #20): off by default, the MCP tool unregistered, and the HTTP route
+// answering 403 instead of actually clicking the page.
 func TestDeleteNoteDisabledByDefault(t *testing.T) {
 	t.Setenv("XHS_ENABLE_DELETE", "")
 	if configs.DeleteEnabled() {
@@ -94,7 +95,8 @@ func TestDeleteNoteDisabledByDefault(t *testing.T) {
 	}
 
 	svc := NewXiaohongshuService()
-	// runHook 保证这里绝不会真的起浏览器：闸门必须在拿页面之前就拦住。
+	// runHook guarantees no browser is ever launched here: the gate must stop the
+	// call before it reaches for a page.
 	svc.runHook = func(ctx context.Context, class pacing.Class, fn func(page *rod.Page) error) error {
 		t.Fatal("删除未启用时不应进入浏览器路径")
 		return nil
@@ -120,7 +122,8 @@ func TestDeleteNoteRequiresNoteID(t *testing.T) {
 	}
 }
 
-// 删除和发布一样不可撤销，必须吃同一份发布额度。
+// Delete is as irreversible as publish, so it must draw on the same publish
+// budget.
 func TestDeleteNoteIsPublishClass(t *testing.T) {
 	t.Setenv("XHS_ENABLE_DELETE", "1")
 

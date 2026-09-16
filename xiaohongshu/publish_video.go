@@ -22,7 +22,7 @@ type PublishVideoContent struct {
 	Visibility   string     // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
 	Products     []string   // 商品关键词列表，用于绑定带货商品
 
-	// SaveAsDraft 见 PublishImageContent.SaveAsDraft（issue #19）。
+	// SaveAsDraft: see PublishImageContent.SaveAsDraft (issue #19).
 	SaveAsDraft bool
 }
 
@@ -117,7 +117,8 @@ func uploadVideo(page *rod.Page, videoPath string) error {
 	return nil
 }
 
-// submitPublishVideo 填写标题、正文、标签后执行终止动作：发布，或存草稿（issue #19）。
+// submitPublishVideo fills in the title, body and tags, then performs the
+// terminal action: publish, or save a draft (issue #19).
 func (p *PublishAction) submitPublishVideo(ctx context.Context, page *rod.Page, c PublishVideoContent) error {
 	// 标题
 	titleElem, err := page.Element("div.d-input input")
@@ -164,7 +165,7 @@ func (p *PublishAction) submitPublishVideo(ctx context.Context, page *rod.Page, 
 		return errors.Wrap(err, "绑定商品失败")
 	}
 
-	// 终止动作二选一，同图文（issue #19）。
+	// One of two terminal actions, same as the image flow (issue #19).
 	if c.SaveAsDraft {
 		return saveDraft(page, p.draftCount, p.draftCountKnown)
 	}
@@ -173,6 +174,7 @@ func (p *PublishAction) submitPublishVideo(ctx context.Context, page *rod.Page, 
 		return err
 	}
 
-	// 校验发布真的成功：跳转、成功提示、表单被收起，三个信号任一为准（issue #8）。
+	// Verify the publish really succeeded: a navigation, a success toast, or the
+	// form being torn down -- any one of the three signals counts (issue #8).
 	return waitPublishSuccess(page, 30*time.Second)
 }

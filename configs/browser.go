@@ -15,7 +15,8 @@ var (
 
 	proxy = ""
 
-	// timezone 浏览器时区；空 = 用浏览器层的默认值（Asia/Shanghai），而不是宿主机时区。
+	// timezone is the browser time zone; empty means the browser layer's own
+	// default (Asia/Shanghai) rather than the host zone.
 	timezone = ""
 )
 
@@ -68,12 +69,13 @@ func SetTimezone(tz string) {
 	timezone = tz
 }
 
-// Timezone 浏览器时区（IANA 名）。空表示未配置，由浏览器层套用默认值。
+// Timezone is the browser time zone as an IANA name. Empty means unconfigured,
+// and the browser layer applies its default.
 func Timezone() string {
 	return timezone
 }
 
-// TimezoneFromEnv 从 XHS_TIMEZONE 读取时区（如 "Asia/Shanghai"）。
+// TimezoneFromEnv reads the time zone from XHS_TIMEZONE, e.g. "Asia/Shanghai".
 // Empty or malformed returns "", which the browser layer turns into its own
 // default — never the host zone, which is the leak in issue #2.
 //
@@ -92,7 +94,8 @@ func TimezoneFromEnv() string {
 	return tz
 }
 
-// validTimezoneName 只做形状校验：IANA 名形如 Asia/Shanghai、UTC、GMT+8。
+// validTimezoneName only checks the shape: IANA names look like Asia/Shanghai,
+// UTC or GMT+8.
 func validTimezoneName(tz string) bool {
 	if len(tz) > 64 || strings.HasPrefix(tz, "/") || strings.HasSuffix(tz, "/") {
 		return false
@@ -108,11 +111,13 @@ func validTimezoneName(tz string) bool {
 	return true
 }
 
-// DeleteEnabled 是否开放删除笔记的能力（issue #20）。
+// DeleteEnabled reports whether the note-delete capability is available
+// (issue #20).
 //
-// 删除是这个项目里唯一会销毁内容的动作，默认不暴露：没有显式设置
-// XHS_ENABLE_DELETE，MCP 工具不会注册，HTTP 接口也会拒绝。要的是"默认不可
-// 能"，而不是"默认可以但请小心"。
+// Delete is the only action in this project that destroys content, so it is not
+// exposed by default: without an explicit XHS_ENABLE_DELETE the MCP tool is
+// never registered and the HTTP endpoint refuses. The goal is "impossible by
+// default", not "possible by default, but be careful".
 func DeleteEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("XHS_ENABLE_DELETE"))) {
 	case "1", "true", "yes", "on":

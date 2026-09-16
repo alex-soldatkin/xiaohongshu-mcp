@@ -39,8 +39,9 @@ func TestProxyFromEnv(t *testing.T) {
 	})
 }
 
-// TestTimezoneFromEnv 校验 XHS_TIMEZONE 解析：未设或形状非法一律返回空串，
-// 由浏览器层套用 Asia/Shanghai，绝不回落到宿主机时区（issue #2）。
+// TestTimezoneFromEnv checks XHS_TIMEZONE parsing: unset or malformed always
+// returns an empty string, leaving the browser layer to apply Asia/Shanghai and
+// never falling back to the host zone (issue #2).
 func TestTimezoneFromEnv(t *testing.T) {
 	tests := []struct {
 		name string

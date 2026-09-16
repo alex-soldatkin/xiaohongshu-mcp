@@ -91,8 +91,9 @@ func TestLaunchFlags(t *testing.T) {
 	}
 }
 
-// TestLaunchFlags_Timezone XHS_TIMEZONE 经 Option 传入时覆盖默认值；
-// 空值回落到 Asia/Shanghai，绝不回落到宿主机时区。
+// TestLaunchFlags_Timezone XHS_TIMEZONE passed through an Option overrides the
+// default; an empty value falls back to Asia/Shanghai and never to the host
+// zone.
 func TestLaunchFlags_Timezone(t *testing.T) {
 	assert.Equal(t, "Europe/Berlin",
 		launchFlags(newConfig(true, WithTimezone("Europe/Berlin")))["timezone"])
@@ -100,8 +101,9 @@ func TestLaunchFlags_Timezone(t *testing.T) {
 		launchFlags(newConfig(true, WithTimezone("")))["timezone"])
 }
 
-// TestLaunchFlags_LocaleSingleSource lang/accept-lang 必须跟着 WithLanguage 走，
-// 不得各写各的：三处不一致本身就是破绽。
+// TestLaunchFlags_LocaleSingleSource lang and accept-lang must follow
+// WithLanguage rather than each carrying its own value: three places disagreeing
+// is itself a tell.
 func TestLaunchFlags_LocaleSingleSource(t *testing.T) {
 	flags := launchFlags(newConfig(true))
 	c := applyOptions(buildOptions(newConfig(true)))
@@ -111,8 +113,8 @@ func TestLaunchFlags_LocaleSingleSource(t *testing.T) {
 	assert.Equal(t, launchLanguage, flags["accept-lang"])
 }
 
-// TestLaunchFlags_WindowSizeFollowsSeed 窗口大小必须跟着 seed 走：
-// 写死常量等于所有账号共用同一台显示器。
+// TestLaunchFlags_WindowSizeFollowsSeed the window size must follow the seed: a
+// hard-coded constant means every account shares one monitor.
 func TestLaunchFlags_WindowSizeFollowsSeed(t *testing.T) {
 	a := launchFlags(newConfig(true, WithFingerprintSeed(98759)))["window-size"]
 	b := launchFlags(newConfig(true, WithFingerprintSeed(98759)))["window-size"]
@@ -225,8 +227,9 @@ func TestWithUserDataDir(t *testing.T) {
 	assert.False(t, ok, "the profile dir must not be passed as a launch flag")
 }
 
-// TestWithUserDataDir_Empty 未配置时不得出现在 option 里：空字符串会让 rod
-// 认为调用方指定了目录，反而关掉它自己的临时目录清理。
+// TestWithUserDataDir_Empty when unconfigured it must not appear in the options
+// at all: an empty string makes rod believe the caller chose a directory, which
+// switches off its own temp-directory cleanup.
 func TestWithUserDataDir_Empty(t *testing.T) {
 	assert.Equal(t, "", applyOptions(buildOptions(newConfig(true))).UserDataDir)
 }

@@ -153,7 +153,8 @@ type PublishRequest struct {
 	Visibility string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
 	Products   []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
 
-	// SaveAsDraft 保存到草稿箱而不是发布，不产生任何对外可见的内容（issue #19）。
+	// SaveAsDraft saves to 草稿箱 instead of publishing, so nothing becomes
+	// visible to anyone else (issue #19).
 	SaveAsDraft bool `json:"save_as_draft,omitempty"`
 }
 
@@ -189,7 +190,7 @@ type PublishVideoRequest struct {
 	Visibility string   `json:"visibility,omitempty"`  // 可见范围: "公开可见"(默认), "仅自己可见", "仅互关好友可见"
 	Products   []string `json:"products,omitempty"`    // 商品关键词列表，用于绑定带货商品
 
-	// SaveAsDraft 见 PublishRequest.SaveAsDraft（issue #19）。
+	// SaveAsDraft: see PublishRequest.SaveAsDraft (issue #19).
 	SaveAsDraft bool `json:"save_as_draft,omitempty"`
 }
 
@@ -220,7 +221,7 @@ type UserProfileResponse struct {
 // finish before closing the browser underneath it.
 const resetTimeout = 30 * time.Second
 
-// DeleteCookies 删除 cookies 文件，用于登录重置。
+// DeleteCookies removes the cookie file to reset the login.
 //
 // Deleting the file is no longer enough: the profile holds the live session, so
 // it has to go too, and the browser holding it open has to be closed first.
@@ -469,7 +470,8 @@ func (s *XiaohongshuService) processImages(images []string) ([]string, error) {
 	return processor.ProcessImages(images)
 }
 
-// publishStatusText 区分两种终止动作的回执文案（issue #19）。
+// publishStatusText picks the receipt wording for each of the two terminal
+// actions (issue #19).
 func publishStatusText(saveAsDraft bool) string {
 	if saveAsDraft {
 		return "已存草稿"
@@ -477,10 +479,11 @@ func publishStatusText(saveAsDraft bool) string {
 	return "发布完成"
 }
 
-// publishClass 决定这次动作记在哪个预算上（issue #19）。
+// publishClass decides which budget this action is charged to (issue #19).
 //
-// 草稿不是发布：它不产生任何对外可见的内容，所以不该吃掉每天 5 次的发布额度。
-// 但它是对创作平台的真实写入流量，一样要被限速，所以归为 write。
+// A draft is not a publish: it produces nothing anyone else can see, so it must
+// not consume one of the five daily publishes. It is still real write traffic to
+// the creator platform and has to be rate-limited, hence the write class.
 func publishClass(saveAsDraft bool) pacing.Class {
 	if saveAsDraft {
 		return pacing.ClassWrite
@@ -504,22 +507,26 @@ func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohon
 	})
 }
 
-// DeleteNoteRequest 删除笔记请求。note_id 必填，且只接受 ID：这里不做
-// "最近一篇"之类的解析（issue #20）。
+// DeleteNoteRequest is the delete-note request. note_id is required and only an
+// ID is accepted: nothing here resolves phrases like "the most recent one"
+// (issue #20).
 type DeleteNoteRequest struct {
 	NoteID string `json:"note_id" binding:"required"`
 }
 
-// DeleteNoteResponse 删除笔记回执
+// DeleteNoteResponse is the delete-note receipt.
 type DeleteNoteResponse struct {
 	NoteID string `json:"note_id"`
 	Status string `json:"status"`
 }
 
-// DeleteNote 从创作者中心的笔记管理里删除一篇已发布笔记（issue #20）。
+// DeleteNote deletes one published note from 笔记管理 in the creator centre
+// (issue #20).
 //
-// 三道闸门：能力默认关闭，由 XHS_ENABLE_DELETE 打开；必须显式给 note_id；
-// 记在 publish 预算上——删除和发布一样是不可撤销的对外动作，占同一份额度。
+// Three gates: the capability is off by default and opened by XHS_ENABLE_DELETE;
+// note_id must be given explicitly; and the action is charged to the publish
+// budget -- delete, like publish, is an irreversible outward action and draws on
+// the same quota.
 func (s *XiaohongshuService) DeleteNote(ctx context.Context, req *DeleteNoteRequest) (*DeleteNoteResponse, error) {
 	if !configs.DeleteEnabled() {
 		return nil, fmt.Errorf("删除笔记功能未启用：需要设置环境变量 XHS_ENABLE_DELETE=1")
@@ -530,7 +537,7 @@ func (s *XiaohongshuService) DeleteNote(ctx context.Context, req *DeleteNoteRequ
 		return nil, fmt.Errorf("必须指定要删除的笔记 ID（note_id）")
 	}
 
-	// 自己的主页各个 tab 都会变。
+	// Every tab of the account's own profile changes.
 	s.cache.invalidate(ctx, store.KindMyProfile)
 
 	err := s.run(ctx, pacing.ClassPublish, func(page *rod.Page) error {

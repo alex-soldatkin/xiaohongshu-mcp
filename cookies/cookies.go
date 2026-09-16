@@ -92,7 +92,8 @@ func (c *localCookie) LoadSeed() int {
 	return f.Seed
 }
 
-// LoadSavedAt 读取 v2 文件的 saved_at。老格式、文件缺失或时间戳不可解析时返回零值。
+// LoadSavedAt reads saved_at from a v2 file. It returns the zero time for the
+// old format, a missing file, or an unparsable timestamp.
 func (c *localCookie) LoadSavedAt() time.Time {
 	data, err := os.ReadFile(c.path)
 	if err != nil {
@@ -110,7 +111,8 @@ func (c *localCookie) LoadSavedAt() time.Time {
 	return ts
 }
 
-// LoadSite 读取会话绑定的站点名。老格式或未设时返回 ""。
+// LoadSite reads the site name bound to the session. It returns "" for the old
+// format or when the field is unset.
 func (c *localCookie) LoadSite() string {
 	data, err := os.ReadFile(c.path)
 	if err != nil {
@@ -124,16 +126,18 @@ func (c *localCookie) LoadSite() string {
 	return f.Site
 }
 
-// SaveSite 写入站点名，保留文件里已有的 cookies 和 seed。
+// SaveSite writes the site name, preserving the cookies and seed already in the
+// file.
 func (c *localCookie) SaveSite(site string) error {
 	cks, err := c.LoadCookies()
 	if err != nil {
-		cks = nil // 文件还不存在：先把站点落下来，cookies 之后再补
+		cks = nil // File does not exist yet: record the site now, cookies later.
 	}
 	return c.write(cks, c.LoadSeed(), site)
 }
 
-// SaveCookies 保存 cookies 到文件中，保留文件里已有的 seed 和站点名。
+// SaveCookies writes the cookies to the file, preserving the seed and site name
+// already in it.
 func (c *localCookie) SaveCookies(data []byte) error {
 	return c.write(data, c.LoadSeed(), c.LoadSite())
 }

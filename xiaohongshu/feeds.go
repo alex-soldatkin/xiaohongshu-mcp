@@ -44,7 +44,8 @@ func (f *FeedsListAction) GetFeedsList(ctx context.Context) ([]Feed, error) {
 	}
 
 	if result == "" {
-		// eval 失败和「页面上就是没有」是两回事，别把前者也报成 ErrNoFeeds。
+		// A failed eval and "the page genuinely has none" are different things;
+		// do not report the former as ErrNoFeeds.
 		if lastErr != nil {
 			return nil, lastErr
 		}

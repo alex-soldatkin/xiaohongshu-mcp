@@ -8,7 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestProfileDir 校验优先级：XHS_PROFILE_DIR > 会话文件同级目录下的 profile/。
+// TestProfileDir checks the precedence: XHS_PROFILE_DIR beats profile/ next to
+// the session file.
 func TestProfileDir(t *testing.T) {
 	t.Run("环境变量优先", func(t *testing.T) {
 		t.Setenv("XHS_PROFILE_DIR", "/custom/profile")

@@ -57,11 +57,13 @@ const stateReaderJS = `(path) => {
 	return JSON.stringify(cur, (k, v) => (isRef(v) ? unwrap(v) : v));
 }`
 
-// readStateJSON 读 __INITIAL_STATE__ 里 path 指向的值，返回其 JSON 文本。
+// readStateJSON reads the value at path inside __INITIAL_STATE__ and returns it
+// as JSON text.
 //
-// path 用点号分隔，例如 "feed.feeds"、"notification.notificationMap.mentions"。
-// 路径不存在不是错误，返回空串——调用方自己决定这算不算失败。只有 eval 本身
-// 失败（页面没了、上下文取消）才返回 error。
+// path is dot-separated, e.g. "feed.feeds" or
+// "notification.notificationMap.mentions". A missing path is not an error: it
+// returns an empty string and the caller decides whether that counts as a
+// failure. Only a failing eval (page gone, context cancelled) returns an error.
 func readStateJSON(page *rod.Page, path string) (string, error) {
 	res, err := page.Eval(stateReaderJS, path)
 	if err != nil {
@@ -70,9 +72,10 @@ func readStateJSON(page *rod.Page, path string) (string, error) {
 	return res.Value.Str(), nil
 }
 
-// readState 读 path 指向的值并反序列化到 out。
+// readState reads the value at path and unmarshals it into out.
 //
-// 返回 false 表示路径不存在（out 不会被改动），不是错误；反序列化失败才是错误。
+// A false return means the path does not exist -- out is left untouched -- and
+// is not an error. A failed unmarshal is an error.
 func readState[T any](page *rod.Page, path string, out *T) (bool, error) {
 	raw, err := readStateJSON(page, path)
 	if err != nil {
@@ -87,13 +90,15 @@ func readState[T any](page *rod.Page, path string, out *T) (bool, error) {
 	return true, nil
 }
 
-// stateWaitInterval 是 waitState 的轮询间隔。
+// stateWaitInterval is waitState's polling interval.
 const stateWaitInterval = 200 * time.Millisecond
 
-// waitState 等 path 指向的值出现，直到出现、超时或 ctx 取消。
+// waitState waits for the value at path to appear, until it does, the timeout
+// expires, or ctx is cancelled.
 //
-// 取代原先的 MustWait(`__INITIAL_STATE__ !== undefined`)：那个条件从首屏起就为真，
-// 立即返回，等于没等。等具体路径才是真的在等注水。
+// It replaces the former MustWait(`__INITIAL_STATE__ !== undefined`): that
+// condition is true from the first paint, so it returned immediately and waited
+// for nothing. Waiting on a concrete path is what actually waits for hydration.
 func waitState(ctx context.Context, page *rod.Page, path string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {

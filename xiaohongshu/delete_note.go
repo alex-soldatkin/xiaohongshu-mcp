@@ -107,20 +107,24 @@ func (a *DeleteNoteAction) Delete(ctx context.Context, noteID string) error {
 		return err
 	}
 
-	// 点完确认只是"点过了"。列表把卡片撤下来是乐观更新，跟服务端删没删没有
-	// 关系 —— 实测过一次：卡片当场消失、接口回了成功，一小时后笔记还在
-	// 笔记管理里。删除这种动作，报错的方向必须是宁可多报失败。
+	// Clicking confirm only means the click happened. The list pulling the card
+	// is an optimistic update and says nothing about whether the server deleted
+	// anything -- measured once: the card vanished on the spot, the API returned
+	// success, and an hour later the note was still in 笔记管理. For an action
+	// like delete, the error must lean towards reporting failure too often.
 	waitNoteRemovedOptimistically(page, noteID, 15*time.Second)
 
 	return a.verifyDeleted(ctx, noteID)
 }
 
-// verifyDeleted 重新加载笔记管理页，确认这篇笔记真的不在了。
+// verifyDeleted reloads the 笔记管理 page and confirms the note really is gone.
 //
-// 这是整条删除链路里唯一可信的信号：前端会在请求还没回来之前就把卡片撤掉，
-// 所以"卡片消失"只是必要条件。重新加载一次，列表是服务端重新给的，它说没有
-// 才算没有。重试是因为删除在服务端可能有短暂延迟；重试一次删除本身是幂等的，
-// 不像发布重试会多发一篇。
+// This is the only trustworthy signal in the whole delete path: the front end
+// pulls the card before the request comes back, so "the card disappeared" is
+// merely a necessary condition. After a reload the list comes fresh from the
+// server, and only then does its absence count. The retries exist because the
+// delete may take a moment to settle server-side; retrying is safe because
+// delete is idempotent, unlike a publish retry, which would post a second note.
 func (a *DeleteNoteAction) verifyDeleted(ctx context.Context, noteID string) error {
 	page := a.page.Context(ctx)
 
@@ -161,8 +165,9 @@ func (a *DeleteNoteAction) verifyDeleted(ctx context.Context, noteID string) err
 		noteID, len(lastIDs), strings.Join(lastIDs, ", "))
 }
 
-// notesListLoaded 判断笔记管理列表是否已经渲染。用来区分"这篇笔记没了"和
-// "整页还没出来"——后者当成删除成功会是最糟的误判。
+// notesListLoaded reports whether the 笔记管理 list has rendered. It separates
+// "this note is gone" from "the page has not appeared yet"; treating the latter
+// as a successful delete would be the worst possible misreading.
 func notesListLoaded(page *rod.Page) bool {
 	elems, err := page.Elements("div.tab-item")
 	if err != nil {
@@ -279,10 +284,12 @@ func confirmDelete(ctx context.Context, page *rod.Page) error {
 			// has watched, this line is the only record of what was agreed to.
 			slog.Info("删除确认弹窗", "text", dialogText)
 
-			// 弹窗弹出来的同时页面还在发 permission/validate?function_type=delete
-			// 的前置校验，弹窗本身也有淡入动画。抢在这之前点确定，观察到过一次
-			// 确认被吞掉：卡片撤下了，服务端没删。停一下再点，人看弹窗本来也要
-			// 一两秒。
+			// While the dialog appears the page is still issuing its
+			// permission/validate?function_type=delete precheck, and the dialog
+			// itself fades in. Clicking confirm ahead of that was observed once to
+			// swallow the confirmation: the card was pulled, the server deleted
+			// nothing. Pause first -- a person reading a dialog takes a second or
+			// two anyway.
 			humanize.Delay(ctx, humanize.Reading)
 			if err := humanize.Click(btn); err != nil {
 				return errors.Wrap(err, "点击删除确认按钮失败")

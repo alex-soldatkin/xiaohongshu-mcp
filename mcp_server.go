@@ -41,7 +41,7 @@ type PublishVideoArgs struct {
 	SaveAsDraft bool     `json:"save_as_draft,omitempty" jsonschema:"存草稿而不发布（可选）。true 时走完同一套表单，最后点存草稿按钮（海外站文案为\"暂存离开\"），笔记进入创作者中心的草稿箱，不对外可见、可随时删除；适合发布前需要人工复核的场景。默认 false 直接发布"`
 }
 
-// DeleteNoteArgs 删除笔记的参数（issue #20）。
+// DeleteNoteArgs holds the arguments for deleting a note (issue #20).
 type DeleteNoteArgs struct {
 	NoteID string `json:"note_id" jsonschema:"要删除的笔记 ID（必填）。只接受具体 ID，不接受\"最近一篇\"\"上一条\"之类的指代；ID 从 get_my_profile 之类的列表接口获取。删除不可恢复"`
 }
@@ -56,12 +56,12 @@ type RefreshArgs struct {
 	ForceRefresh bool `json:"force_refresh,omitempty" jsonschema:"跳过本地缓存，强制走浏览器重新抓取。默认 false，即命中未过期的缓存时直接返回，不消耗账号的请求预算"`
 }
 
-// ListFeedsArgs 首页 Feeds 列表参数
+// ListFeedsArgs holds the arguments for the home feed listing.
 type ListFeedsArgs struct {
 	RefreshArgs
 }
 
-// UnreadCountArgs 未读数参数
+// UnreadCountArgs holds the arguments for the unread count.
 type UnreadCountArgs struct {
 	RefreshArgs
 }
@@ -592,10 +592,11 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 
 	tools := 18
 
-	// 工具 19（可选）: 删除笔记。
+	// Tool 19 (optional): delete a note.
 	//
-	// 只有设置了 XHS_ENABLE_DELETE 才注册。不是"注册了再拒绝"：工具不在 schema
-	// 里，模型就不会选它，这比运行时报错早一步（issue #20）。
+	// Registered only when XHS_ENABLE_DELETE is set. This is not "register it and
+	// then refuse": a tool absent from the schema is a tool the model will not
+	// choose, which comes one step earlier than a runtime error (issue #20).
 	if configs.DeleteEnabled() {
 		mcp.AddTool(server,
 			&mcp.Tool{

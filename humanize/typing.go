@@ -215,7 +215,7 @@ func typeASCII(ctx context.Context, page *rod.Page, runes []rune) error {
 		}
 
 		d := keystrokeDelay()
-		// 标点和空格后停顿更久，和真人一样
+		// Pause longer after punctuation and spaces, the way a person does.
 		if r == ' ' || r == ',' || r == '.' || r == '?' || r == '!' {
 			d += keystrokeDelay()
 		}

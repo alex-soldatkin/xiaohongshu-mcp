@@ -804,7 +804,8 @@ func getCommentCount(page *rod.Page) int {
 // getTotalCommentCount 取笔记的评论总数，读 __INITIAL_STATE__ 里的
 // interactInfo.commentCount，不依赖评论区文案。取不到返回 0。
 func getTotalCommentCount(page *rod.Page) int {
-	// commentCount 在页面上有时是数字、有时是字符串，用 json.Number 两种都收。
+	// On the page commentCount is sometimes a number and sometimes a string;
+	// json.Number accepts both.
 	var noteDetailMap map[string]struct {
 		Note struct {
 			InteractInfo struct {

@@ -46,7 +46,7 @@ type CurrentUser struct {
 func (a *LoginAction) CurrentUser(ctx context.Context) (*CurrentUser, error) {
 	pp := a.page.Context(ctx).Timeout(10 * time.Second)
 
-	// userId 在不同部署下可能写作 user_id，两个都收。
+	// Depending on the deployment userId may be spelled user_id; accept both.
 	var info struct {
 		Guest     bool   `json:"guest"`
 		Nickname  string `json:"nickname"`

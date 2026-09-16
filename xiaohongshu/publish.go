@@ -37,15 +37,18 @@ type PublishImageContent struct {
 type PublishAction struct {
 	page *rod.Page
 
-	// draftCount 是进入发布页时读到的草稿箱数量，draftCountKnown 区分"0 篇"和
-	// "这一页没有计数器"。上传后表单会顶掉带计数器的头部，所以必须在这里读一次
-	// 带走，存草稿的成功校验要用它（issue #19）。
+	// draftCount is the 草稿箱 count read on arriving at the publish page, and
+	// draftCountKnown separates "zero drafts" from "this page has no counter".
+	// After the upload the form replaces the header that carries the counter, so
+	// it has to be read here and carried along; the draft-save success check needs
+	// it (issue #19).
 	draftCount      int
 	draftCountKnown bool
 }
 
-// urlOfPublic 创作者中心的发布页。与 navigate.go 的落地页一样是 var：
-// 启动时由 SetSite 按站点写入（见 site.go），使用处保持不变。
+// urlOfPublic is the creator centre's publish page. Like the landing pages in
+// navigate.go it is a var: SetSite writes it per deployment at startup (see
+// site.go), leaving the use sites unchanged.
 var urlOfPublic = SiteXiaohongshu.CreatorPublish()
 
 // contentElemTimeout 查找正文输入框的轮询窗口
@@ -368,7 +371,8 @@ func waitForUploadComplete(page *rod.Page, expectedCount int) error {
 	return errors.Errorf("第%d张图片上传超时(60s)，请检查网络连接和图片大小", expectedCount)
 }
 
-// submitPublish 走完发布表单并执行终止动作：发布，或存草稿（issue #19）。
+// submitPublish fills in the publish form and performs the terminal action:
+// publish, or save a draft (issue #19).
 func (p *PublishAction) submitPublish(ctx context.Context, page *rod.Page, c PublishImageContent) error {
 	titleElem, err := page.Element("div.d-input input")
 	if err != nil {
@@ -430,7 +434,8 @@ func (p *PublishAction) submitPublish(ctx context.Context, page *rod.Page, c Pub
 		return errors.Wrap(err, "绑定商品失败")
 	}
 
-	// 终止动作二选一：存草稿只进草稿箱，不产生任何对外可见的内容（issue #19）。
+	// One of two terminal actions: saving a draft only reaches 草稿箱 and produces
+	// nothing anyone else can see (issue #19).
 	if c.SaveAsDraft {
 		return saveDraft(page, p.draftCount, p.draftCountKnown)
 	}
@@ -439,9 +444,11 @@ func (p *PublishAction) submitPublish(ctx context.Context, page *rod.Page, c Pub
 		return err
 	}
 
-	// 校验发布真的成功：跳转、成功提示、表单被收起，三个信号任一为准（issue #8）。
-	// 只看跳转会把海外站的成功发布判成失败，而失败的自然反应是重试 —— 同一篇笔记
-	// 会被发第二次。
+	// Verify the publish really succeeded: a navigation, a success toast, or the
+	// form being torn down -- any one of the three signals counts (issue #8).
+	// Watching only the navigation would read a successful publish on the overseas
+	// deployment as a failure, and the natural response to a failure is a retry --
+	// posting the same note twice.
 	return waitPublishSuccess(page, 30*time.Second)
 }
 
@@ -529,9 +536,10 @@ func findPublishButton(page *rod.Page) (*publishButton, string, error) {
 			return &publishButton{elem: widget, isWidget: true}, "新版发布按钮不可点击", nil
 		}
 
-		// 组件的内容在 closed shadow root 里，页面脚本看不见（issue #16）。
-		// 用 CDP 走进去拿到真正的按钮，而不是按比例猜坐标。标签取组件自己的
-		// submit-text，不硬编码中文文案。
+		// The widget's contents live in a closed shadow root, invisible to page
+		// scripts (issue #16). Walk in through CDP to get the real button rather
+		// than guessing coordinates by ratio. The label comes from the widget's own
+		// submit-text attribute, so no Chinese wording is hard-coded.
 		label := ""
 		if v, err := widget.Attribute("submit-text"); err == nil && v != nil {
 			label = strings.TrimSpace(*v)
@@ -544,7 +552,8 @@ func findPublishButton(page *rod.Page) (*publishButton, string, error) {
 			return &publishButton{elem: btn}, "", nil
 		}
 
-		// 兜底：进不去 shadow root 时仍按坐标点击组件，但这是最后手段。
+		// Fallback: if the shadow root cannot be entered, click the widget by
+		// coordinates -- but only as a last resort.
 		slog.Warn("未能在 shadow DOM 中定位发布按钮，退回坐标点击", "submit_text", label)
 		return &publishButton{elem: widget, isWidget: true}, "", nil
 	}

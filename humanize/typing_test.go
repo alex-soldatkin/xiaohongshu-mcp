@@ -37,7 +37,8 @@ func TestSegmentTextRoundTrip(t *testing.T) {
 }
 
 func TestSegmentNewlineIsLiteral(t *testing.T) {
-	// 换行仍走 insertText：tiptap 可能把 Enter 当成分块。
+	// Newlines still go through insertText: tiptap may treat Enter as a block
+	// split.
 	for _, s := range segmentText("a\nb") {
 		if string(s.text) == "\n" {
 			assert.Equal(t, segLiteral, s.kind)
@@ -53,10 +54,10 @@ func TestClusterLen(t *testing.T) {
 		want int
 	}{
 		{"😀", 1},
-		{"👍🏽", 2},      // 肤色修饰符
-		{"🇨🇳", 2},      // 区域指示符对
-		{"👨‍👩‍👧‍👦", 7}, // ZWJ 家庭
-		{"❤️", 2},      // 变体选择符
+		{"👍🏽", 2},      // skin-tone modifier
+		{"🇨🇳", 2},      // regional indicator pair
+		{"👨‍👩‍👧‍👦", 7}, // ZWJ family
+		{"❤️", 2},      // variation selector
 		{"\n", 1},
 	}
 
@@ -76,7 +77,7 @@ func TestNeedsShift(t *testing.T) {
 }
 
 func TestKeyInfoForUnknownRune(t *testing.T) {
-	// 未定义的键不能 panic，只能落回 insertText。
+	// An undefined key must not panic; it can only fall back to insertText.
 	_, ok := keyInfoFor('你')
 	assert.False(t, ok)
 

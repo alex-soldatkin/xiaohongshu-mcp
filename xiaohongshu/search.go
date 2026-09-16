@@ -102,7 +102,8 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 	if err := navigateFrom(ctx, page, searchURL, urlExplore, navWaitStable); err != nil {
 		return nil, err
 	}
-	// 等结果集注水。超时不报错：后面读不到会返回 ErrNoFeeds，那条错误更准确。
+	// Wait for the result set to hydrate. A timeout is not an error: if the read
+	// below finds nothing it returns ErrNoFeeds, which is the more accurate error.
 	if err := waitState(ctx, page, "search.feeds", 10*time.Second); err != nil {
 		logrus.Warnf("搜索结果状态未就绪，继续读取: %v", err)
 	}
@@ -158,8 +159,9 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 	return notes, nil
 }
 
-// readFeedIDs 读当前结果集的 id 列表，用来判断数据有没有换一批。
-// 读不到就当作「没换」，返回空串。
+// readFeedIDs reads the id list of the current result set, used to tell whether
+// the data has been replaced. A failed read counts as "unchanged" and returns an
+// empty string.
 func readFeedIDs(page *rod.Page) string {
 	var feeds []struct {
 		ID string `json:"id"`

@@ -171,10 +171,11 @@ func (s *AppServer) publishVideoHandler(c *gin.Context) {
 	respondSuccess(c, result, "视频发布成功")
 }
 
-// deleteNoteHandler 删除已发布笔记（issue #20）。
+// deleteNoteHandler deletes a published note (issue #20).
 //
-// 能力闸门在 service 层，这里只负责把它变成一个 403 而不是 500：没开启就是
-// 没开启，跟参数错误区分开。
+// The capability gate lives in the service layer; this handler only turns it
+// into a 403 rather than a 500, so "not enabled" stays distinct from "bad
+// request".
 func (s *AppServer) deleteNoteHandler(c *gin.Context) {
 	if !configs.DeleteEnabled() {
 		respondError(c, http.StatusForbidden, "DELETE_DISABLED",

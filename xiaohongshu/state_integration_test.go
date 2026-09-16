@@ -1,7 +1,8 @@
 //go:build integration
 
-// 集成测试：起浏览器 + 本地 HTTP 服务，默认 go test 不编译不运行。
-// 手动跑：GOARCH=arm64 go test -tags integration ./xiaohongshu/ -run TestReadState
+// Integration test: launches a browser plus a local HTTP server. A plain go
+// test neither builds nor runs it.
+// Run it by hand: GOARCH=arm64 go test -tags integration ./xiaohongshu/ -run TestReadState
 package xiaohongshu
 
 import (
@@ -198,7 +199,7 @@ func newStateFixture(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// openShape 打开某一种形态的 fixture 页。
+// openShape opens the fixture page for one of the shapes.
 func openShape(t *testing.T, b *headless_browser.Browser, srv *httptest.Server, shape string) *rod.Page {
 	t.Helper()
 
@@ -279,7 +280,7 @@ func TestReadStateLiveRefsWouldBreakNaiveStringify(t *testing.T) {
 	require.NotEmpty(t, raw, "the helper must read the same subtree the naive stringify choked on")
 }
 
-// TestReadStateMissingPath: 路径不存在是干净的「没有」，不是错误。
+// TestReadStateMissingPath: a missing path is a clean "not there", not an error.
 func TestReadStateMissingPath(t *testing.T) {
 	b := browser.NewBrowser(true)
 	defer b.Close()
@@ -305,7 +306,8 @@ func TestReadStateMissingPath(t *testing.T) {
 	}
 }
 
-// TestReadStateUnmarshalsRealTypes 读出来的 JSON 要能喂给生产代码用的那些结构体。
+// TestReadStateUnmarshalsRealTypes the JSON that comes back must feed the
+// structs production code actually uses.
 func TestReadStateUnmarshalsRealTypes(t *testing.T) {
 	b := browser.NewBrowser(true)
 	defer b.Close()
@@ -325,7 +327,8 @@ func TestReadStateUnmarshalsRealTypes(t *testing.T) {
 			assert.Equal(t, "TOKEN-1", feeds[0].XsecToken)
 			assert.Equal(t, "甲", feeds[0].NoteCard.User.Nickname)
 			assert.Equal(t, "12", feeds[0].NoteCard.InteractInfo.LikedCount)
-			// live_v2 条目要被 onlyNotes 滤掉，说明 modelType 也完整穿过来了。
+			// The live_v2 entry must be filtered out by onlyNotes, which shows
+			// modelType came through intact as well.
 			assert.Len(t, onlyNotes(feeds), 2)
 
 			var count rawCount
@@ -346,7 +349,7 @@ func TestReadStateUnmarshalsRealTypes(t *testing.T) {
 			assert.Equal(t, itemTypeNote, payload.MessageList[0].Item.Type)
 			assert.True(t, payload.MessageList[0].visible())
 
-			// feed_detail.go 的 noteDetailMap 结构，原样照抄。
+			// The noteDetailMap shape from feed_detail.go, copied verbatim.
 			var noteDetailMap map[string]struct {
 				Note     FeedDetail  `json:"note"`
 				Comments CommentList `json:"comments"`
@@ -381,7 +384,8 @@ func TestReadStateUnmarshalsRealTypes(t *testing.T) {
 	}
 }
 
-// TestWaitState: 已经在页面上的路径立刻返回，不存在的路径按超时报错而不是干等。
+// TestWaitState: a path already on the page returns immediately, and a path
+// that never appears fails on the timeout instead of hanging.
 func TestWaitState(t *testing.T) {
 	b := browser.NewBrowser(true)
 	defer b.Close()
@@ -397,7 +401,7 @@ func TestWaitState(t *testing.T) {
 	require.Error(t, err)
 	assert.Less(t, time.Since(start), 5*time.Second, "waitState overran its timeout")
 
-	// ctx 取消要立刻返回，不等满 timeout。
+	// A cancelled ctx must return at once rather than waiting out the timeout.
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 	assert.ErrorIs(t, waitState(cancelled, page, "user.neverAppears", time.Minute), context.Canceled)

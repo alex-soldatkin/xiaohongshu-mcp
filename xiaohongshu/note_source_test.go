@@ -14,7 +14,7 @@ func TestMakeFeedDetailURLCarriesSource(t *testing.T) {
 		"https://www.xiaohongshu.com/explore/abc?xsec_token=tok&xsec_source=pc_search",
 		makeFeedDetailURL("abc", "tok", xsecSourceSearch))
 
-	// 空来源退回信息流，保持改动前的行为
+	// An empty source falls back to the feed, preserving the previous behaviour.
 	assert.Equal(t,
 		"https://www.xiaohongshu.com/explore/abc?xsec_token=tok&xsec_source=pc_feed",
 		makeFeedDetailURL("abc", "tok", ""))
@@ -56,7 +56,7 @@ func TestNoteSourceStaysBounded(t *testing.T) {
 	}
 	assert.LessOrEqual(t, len(table.entries), noteSourceCapacity)
 
-	// 最新写入的必须还在
+	// The most recently written entry must still be there.
 	_, ok := table.lookup(fmt.Sprintf("n%d", noteSourceCapacity*2-1))
 	assert.True(t, ok)
 }

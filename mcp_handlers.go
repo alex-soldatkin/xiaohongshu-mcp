@@ -533,7 +533,7 @@ func (s *AppServer) handleUserProfile(ctx context.Context, args map[string]any) 
 	}
 }
 
-// handleDeleteNote 删除一篇已发布笔记（issue #20）。
+// handleDeleteNote deletes one published note (issue #20).
 func (s *AppServer) handleDeleteNote(ctx context.Context, noteID string) *MCPToolResult {
 	logrus.Warnf("MCP: 删除笔记 - note_id: %s", noteID)
 

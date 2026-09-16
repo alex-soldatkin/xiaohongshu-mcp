@@ -53,7 +53,7 @@ func (l *loginSessions) cancelCurrent() {
 	l.cancel = nil
 	l.mu.Unlock()
 
-	// 放到锁外调用，理由同 start
+	// Called outside the lock, for the same reason as in start.
 	if cancel != nil {
 		cancel()
 	}

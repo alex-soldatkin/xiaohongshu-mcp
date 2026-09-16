@@ -63,7 +63,9 @@ func (u *UserProfileAction) UserProfile(ctx context.Context, userID, xsecToken s
 
 // extractUserProfileData 从页面中提取用户资料数据的通用方法
 func (u *UserProfileAction) extractUserProfileData(ctx context.Context, page *rod.Page, tab ProfileTab) (*UserProfileResponse, error) {
-	// 等资料注水。原先等的是 __INITIAL_STATE__ 本身存在，而它从首屏起就在，等于没等。
+	// Wait for the profile to hydrate. The previous wait was on __INITIAL_STATE__
+	// itself existing, and it is there from the first paint, so it waited for
+	// nothing.
 	if err := waitState(ctx, page, "user.userPageData", 10*time.Second); err != nil {
 		return nil, fmt.Errorf("user.userPageData not found in __INITIAL_STATE__: %w", err)
 	}
@@ -87,7 +89,8 @@ func (u *UserProfileAction) extractUserProfileData(ctx context.Context, page *ro
 		return nil, fmt.Errorf("user.notes not found in __INITIAL_STATE__")
 	}
 
-	// 3. 当前 tab。读不到就按默认下标 0、不校验 tab 处理——原先的 JS 也是这么兜底的。
+	// 3. The active tab. A failed read falls back to index 0 with no tab check,
+	//    which is the same fallback the original JS had.
 	var activeTab struct {
 		Index int    `json:"index"`
 		Query string `json:"query"`
