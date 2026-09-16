@@ -96,6 +96,7 @@ func NewXiaohongshuService(opts ...ServiceOption) *XiaohongshuService {
 			ProfileDir: profileDir,
 			Session:    cookies.NewLoadCookie(cookies.GetCookiesFilePath()),
 			Site:       xiaohongshu.ActiveSite().Name,
+			SiteDomain: xiaohongshu.ActiveSite().Domain,
 			Lifecycle:  configs.BrowserLifecycleFromEnv(),
 		}),
 	}

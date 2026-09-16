@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -270,4 +271,78 @@ func TestManagerRefusesLockedProfile(t *testing.T) {
 	_, err = m.Lease(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), fmt.Sprintf("pid %d", os.Getpid()))
+}
+
+// TestManagerExportKeepsOneDeployment reproduces issue #21: a browser seeded
+// from a rednote jar and then pointed somewhere else must not write that
+// somewhere else into the session file.
+//
+// The loopback origin stands in for the foreign domain — the bug had nothing to
+// do with which domain it was, only that it was not the account's — and it sets
+// a cookie of its own, so the jar really does hold two domains by the time the
+// lease is released.
+func TestManagerExportKeepsOneDeployment(t *testing.T) {
+	url := managerTestServer(t)
+	dir := filepath.Join(t.TempDir(), "profile")
+	session := cookies.NewLoadCookie(filepath.Join(t.TempDir(), "cookies.json"))
+
+	// The jar is already mixed, the way a jar written before the filter existed
+	// would be: the guest CN session must not be installed into a fresh profile
+	// either.
+	seeded := `[{"name":"web_session","value":"real","domain":".rednote.com","path":"/"},
+	            {"name":"a1","value":"device","domain":".rednote.com","path":"/"},
+	            {"name":"web_session","value":"guest","domain":".xiaohongshu.com","path":"/"}]`
+	require.NoError(t, session.SaveCookies([]byte(seeded)))
+
+	requireBrowser(t)
+	m := NewManager(ManagerConfig{
+		Headless:   true,
+		Options:    []Option{WithFingerprintSeed(probeSeed)},
+		ProfileDir: dir,
+		Session:    session,
+		Site:       "rednote",
+		SiteDomain: "rednote.com",
+	})
+	defer m.Shutdown(context.Background())
+
+	leaseAt(t, m, url).Release()
+
+	raw, err := session.LoadCookies()
+	require.NoError(t, err)
+	var jar []struct {
+		Name   string `json:"name"`
+		Value  string `json:"value"`
+		Domain string `json:"domain"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &jar))
+	require.NotEmpty(t, jar, "the export threw the session away instead of filtering it")
+
+	var names []string
+	for _, c := range jar {
+		assert.True(t, strings.HasSuffix(strings.TrimPrefix(c.Domain, "."), "rednote.com"),
+			"cookie %s for %s leaked into the session file", c.Name, c.Domain)
+		names = append(names, c.Name)
+	}
+	assert.Contains(t, names, "web_session", "the account's own session was dropped")
+	assert.NotContains(t, names, "probe_session", "the foreign cookie reached the session file")
+	for _, c := range jar {
+		assert.NotEqual(t, "guest", c.Value, "the mixed jar's foreign session survived a round trip")
+	}
+
+	// The profile keeps what the export refused: a profile is a browser, not an
+	// account record, and a browser that forgets the cookies it was handed is a
+	// different bug.
+	lease := leaseAt(t, m, url)
+	defer lease.Release()
+	m.mu.Lock()
+	live, err := getCookies(m.b)
+	m.mu.Unlock()
+	require.NoError(t, err)
+
+	var liveDomains []string
+	for _, c := range live {
+		liveDomains = append(liveDomains, c.Domain)
+	}
+	assert.Contains(t, liveDomains, "127.0.0.1", "the browser lost the foreign cookie too")
+	assert.NotContains(t, liveDomains, ".xiaohongshu.com", "seeding installed a foreign session into a fresh profile")
 }

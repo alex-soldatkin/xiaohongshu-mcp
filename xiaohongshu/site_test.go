@@ -115,16 +115,6 @@ func TestSiteByName(t *testing.T) {
 	}
 }
 
-func TestDomainMatches(t *testing.T) {
-	assert.True(t, domainMatches(".rednote.com", "rednote.com"))
-	assert.True(t, domainMatches("rednote.com", "rednote.com"))
-	assert.True(t, domainMatches("www.rednote.com", "rednote.com"))
-	assert.True(t, domainMatches("as.rednote.com", "rednote.com"))
-	assert.False(t, domainMatches("rednote.com.evil.test", "rednote.com"))
-	assert.False(t, domainMatches("www.xiaohongshu.com", "rednote.com"))
-	assert.False(t, domainMatches("", "rednote.com"))
-}
-
 // jarJSON builds a cookies array in the shape the session file stores.
 func jarJSON(t *testing.T, domains ...string) []byte {
 	t.Helper()

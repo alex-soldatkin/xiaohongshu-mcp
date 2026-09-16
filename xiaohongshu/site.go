@@ -6,6 +6,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/xpzouying/xiaohongshu-mcp/cookies"
 )
 
 // Site is the deployment profile: the handful of facts that differ between the
@@ -174,14 +176,6 @@ func KnownSiteNames() []string {
 	return []string{SiteXiaohongshu.Name, SiteRednote.Name}
 }
 
-// domainMatches reports whether a cookie domain belongs to a site domain.
-// Cookie domains come in three shapes — ".rednote.com", "rednote.com" and
-// "www.rednote.com" — and all three belong to the site.
-func domainMatches(cookieDomain, siteDomain string) bool {
-	d := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(cookieDomain), "."))
-	return d == siteDomain || strings.HasSuffix(d, "."+siteDomain)
-}
-
 // jarCookie is the only field of a stored cookie this package cares about.
 type jarCookie struct {
 	Domain string `json:"domain"`
@@ -208,7 +202,7 @@ func sniffSiteFromJar(raw []byte) (Site, bool) {
 	var seen []Site
 	for _, preset := range []Site{SiteXiaohongshu, SiteRednote} {
 		for _, c := range cks {
-			if domainMatches(c.Domain, preset.Domain) {
+			if cookies.DomainMatches(c.Domain, preset.Domain) {
 				seen = append(seen, preset)
 				break
 			}
@@ -237,7 +231,7 @@ func jarHasSessionFor(raw []byte, s Site) bool {
 	}
 
 	for _, c := range cks {
-		if domainMatches(c.Domain, s.Domain) {
+		if cookies.DomainMatches(c.Domain, s.Domain) {
 			return true
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +53,15 @@ type ManagerConfig struct {
 	// next start does not have to guess from cookie domains. Empty leaves
 	// whatever the file already says.
 	Site string
+	// SiteDomain is that deployment's cookie domain ("rednote.com"). It is the
+	// filter on both ends of the session file: only cookies belonging to it are
+	// exported, and only those are seeded back in.
+	//
+	// The domain arrives as a string rather than being read from the site
+	// package because that package builds on this one; importing it here would
+	// invert the dependency. Empty disables the filter, which is what a test
+	// with no deployment wants.
+	SiteDomain string
 	// Lifecycle bounds how long one browser process lives.
 	Lifecycle configs.BrowserLifecycle
 }
@@ -350,7 +360,14 @@ func (m *Manager) seedDecisionLocked() (raw string, savedAt time.Time, doSeed bo
 		// A missing file is the normal first run, not an error.
 		logrus.Debugf("browser: no cookie backup to seed from: %v", err)
 	}
-	raw = string(data)
+	// Filter on the way in as well as on the way out: a jar written before this
+	// filter existed, or edited by hand, must not install a foreign session into
+	// a fresh profile (issue #21).
+	raw, droppedSeed := keepDomainJSON(string(data), m.cfg.SiteDomain)
+	if len(droppedSeed) > 0 {
+		logrus.Infof("browser: seeding dropped %d cookie(s) outside %s (domains: %s)",
+			len(droppedSeed), m.cfg.SiteDomain, strings.Join(uniqueSorted(droppedSeed), ", "))
+	}
 	hasCookies := hasCookieContent(raw)
 	savedAt = m.cfg.Session.LoadSavedAt()
 
@@ -427,9 +444,22 @@ func (m *Manager) exportLocked() error {
 		logrus.Warnf("browser: cannot read cookies for export: %v", err)
 		return err
 	}
+
+	// The jar holds every domain the browser touched, and the session file is
+	// meant to be one account's session (issue #21). Anything else is dropped
+	// here rather than persisted: a jar mixing two deployments makes the
+	// start-up domain sniff ambiguous and can install a foreign session into a
+	// fresh profile. Chrome's own profile keeps the foreign cookies, which is
+	// correct — a profile is a browser, not an account record.
+	cks, dropped := keepDomain(cks, m.cfg.SiteDomain)
+	if len(dropped) > 0 {
+		logrus.Infof("browser: export dropped %d cookie(s) outside %s (domains: %s); the profile keeps them",
+			len(dropped), m.cfg.SiteDomain, strings.Join(uniqueSorted(dropped), ", "))
+	}
 	if len(cks) == 0 {
 		// Never overwrite a good backup with an empty jar; a browser that
-		// reports no cookies is more likely broken than logged out.
+		// reports no cookies for this deployment is more likely broken, or
+		// simply pointed elsewhere, than logged out.
 		return nil
 	}
 
@@ -541,6 +571,84 @@ func bounded(d time.Duration, what string, fn func()) {
 	case <-time.After(d):
 		logrus.Warnf("browser: %s did not finish within %s, moving on", what, d)
 	}
+}
+
+// keepDomain splits a live jar into the cookies belonging to siteDomain and the
+// domains of those that do not. An empty siteDomain keeps everything, which is
+// what a test with no deployment configured wants.
+func keepDomain(cks []*proto.NetworkCookie, siteDomain string) (kept []*proto.NetworkCookie, dropped []string) {
+	if siteDomain == "" {
+		return cks, nil
+	}
+	for _, c := range cks {
+		if cookies.DomainMatches(c.Domain, siteDomain) {
+			kept = append(kept, c)
+			continue
+		}
+		dropped = append(dropped, c.Domain)
+	}
+	return kept, dropped
+}
+
+// keepDomainJSON does the same to a stored jar, without reshaping the cookies
+// it keeps: each entry goes back out as the bytes it came in as, so a field
+// this build does not know about survives the round trip.
+//
+// A jar that will not parse is returned untouched. Refusing to read something
+// is not a reason to throw it away, and the launch below fails visibly if the
+// jar is genuinely broken.
+func keepDomainJSON(raw, siteDomain string) (string, []string) {
+	if siteDomain == "" || strings.TrimSpace(raw) == "" {
+		return raw, nil
+	}
+
+	var entries []json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		return raw, nil
+	}
+
+	kept := make([]json.RawMessage, 0, len(entries))
+	var dropped []string
+	for _, e := range entries {
+		var probe struct {
+			Domain string `json:"domain"`
+		}
+		if err := json.Unmarshal(e, &probe); err != nil {
+			return raw, nil
+		}
+		if cookies.DomainMatches(probe.Domain, siteDomain) {
+			kept = append(kept, e)
+			continue
+		}
+		dropped = append(dropped, probe.Domain)
+	}
+	if len(dropped) == 0 {
+		return raw, nil
+	}
+
+	out, err := json.Marshal(kept)
+	if err != nil {
+		return raw, nil
+	}
+	return string(out), dropped
+}
+
+// uniqueSorted makes a domain list fit to log: deduplicated, so fifteen cookies
+// from one host read as one host, and ordered, so two runs compare.
+func uniqueSorted(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" {
+			s = "(none)"
+		}
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // getCookies reads the browser cookie jar under a timeout.

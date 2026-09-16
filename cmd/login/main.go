@@ -53,6 +53,7 @@ func main() {
 		ProfileDir: profileDir,
 		Session:    store,
 		Site:       site.Name,
+		SiteDomain: site.Domain,
 	})
 	ctx := context.Background()
 	defer manager.Shutdown(ctx)
