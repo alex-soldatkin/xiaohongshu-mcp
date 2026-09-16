@@ -156,3 +156,76 @@ func TestMCPAcceptsConfiguredBearerToken(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, recorder.Code)
 }
+
+// TestDeleteToolHiddenByDefault 固定删除工具的暴露闸门（issue #20）。
+//
+// 重点是"不在 schema 里"，而不是"调用时报错"：模型看不到的工具不会被选中，
+// 这比运行时拒绝早一步。
+func TestDeleteToolHiddenByDefault(t *testing.T) {
+	assert.False(t, mcpToolNames(t).delete, "默认不应注册 delete_note")
+
+	t.Setenv("XHS_ENABLE_DELETE", "1")
+	assert.True(t, mcpToolNames(t).delete, "XHS_ENABLE_DELETE=1 时应注册 delete_note")
+}
+
+type toolPresence struct{ delete bool }
+
+func mcpToolNames(t *testing.T) toolPresence {
+	t.Helper()
+
+	router := setupRoutes(NewAppServer(NewXiaohongshuService(), ""))
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/mcp",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var result struct {
+		Result struct {
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+
+	var got toolPresence
+	for _, tool := range result.Result.Tools {
+		if tool.Name == "delete_note" {
+			got.delete = true
+		}
+	}
+	return got
+}
+
+// 路由始终注册，闸门在 handler 里（未启用时 403）。
+func TestDeleteRouteRegistered(t *testing.T) {
+	router := setupRoutes(NewAppServer(NewXiaohongshuService(), ""))
+
+	registered := make(map[string]bool)
+	for _, r := range router.Routes() {
+		registered[r.Method+" "+r.Path] = true
+	}
+	assert.True(t, registered["POST /api/v1/notes/delete"], "删除路由应已注册")
+}
+
+func TestDeleteRouteForbiddenWhenDisabled(t *testing.T) {
+	t.Setenv("XHS_ENABLE_DELETE", "")
+
+	router := setupRoutes(NewAppServer(NewXiaohongshuService(), ""))
+	w := httptest.NewRecorder()
+	req, err := http.NewRequest(http.MethodPost, "/api/v1/notes/delete",
+		strings.NewReader(`{"note_id":"695acc29000000001e02799d"}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, "未启用时应当 403，且不碰浏览器")
+}

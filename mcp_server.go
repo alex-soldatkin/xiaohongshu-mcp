@@ -8,6 +8,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sirupsen/logrus"
+	"github.com/xpzouying/xiaohongshu-mcp/configs"
 )
 
 // Helper functions for annotation pointers
@@ -38,6 +39,11 @@ type PublishVideoArgs struct {
 	Visibility  string   `json:"visibility,omitempty" jsonschema:"可见范围（可选），支持: 公开可见(默认)、仅自己可见、仅互关好友可见。不填则默认公开可见"`
 	Products    []string `json:"products,omitempty" jsonschema:"商品关键词列表（可选），用于绑定带货商品。填写商品名称或商品ID，系统会自动搜索并选择第一个匹配结果。需账号已开通商品功能。示例: [面膜, 防晒霜SPF50]"`
 	SaveAsDraft bool     `json:"save_as_draft,omitempty" jsonschema:"存草稿而不发布（可选）。true 时走完同一套表单，最后点存草稿按钮（海外站文案为\"暂存离开\"），笔记进入创作者中心的草稿箱，不对外可见、可随时删除；适合发布前需要人工复核的场景。默认 false 直接发布"`
+}
+
+// DeleteNoteArgs 删除笔记的参数（issue #20）。
+type DeleteNoteArgs struct {
+	NoteID string `json:"note_id" jsonschema:"要删除的笔记 ID（必填）。只接受具体 ID，不接受\"最近一篇\"\"上一条\"之类的指代；ID 从 get_my_profile 之类的列表接口获取。删除不可恢复"`
 }
 
 // RefreshArgs is embedded in every read tool's arguments (issue #7).
@@ -584,7 +590,35 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 		}),
 	)
 
-	logrus.Infof("Registered %d MCP tools", 18)
+	tools := 18
+
+	// 工具 19（可选）: 删除笔记。
+	//
+	// 只有设置了 XHS_ENABLE_DELETE 才注册。不是"注册了再拒绝"：工具不在 schema
+	// 里，模型就不会选它，这比运行时报错早一步（issue #20）。
+	if configs.DeleteEnabled() {
+		mcp.AddTool(server,
+			&mcp.Tool{
+				Name: "delete_note",
+				Description: "删除一篇已发布的笔记（不可恢复）。必须显式提供 note_id；" +
+					"不接受\"最近一篇\"之类的说法，ID 请从 get_my_profile 等列表接口取。" +
+					"需要服务端设置 XHS_ENABLE_DELETE=1 才会出现这个工具。",
+				Annotations: &mcp.ToolAnnotations{
+					Title:           "Delete Note",
+					DestructiveHint: boolPtr(true),
+					IdempotentHint:  true,
+				},
+			},
+			withPanicRecovery("delete_note", func(ctx context.Context, req *mcp.CallToolRequest, args DeleteNoteArgs) (*mcp.CallToolResult, any, error) {
+				result := appServer.handleDeleteNote(ctx, args.NoteID)
+				return convertToMCPResult(result), nil, nil
+			}),
+		)
+		tools++
+		logrus.Warn("delete_note tool is ENABLED (XHS_ENABLE_DELETE); published notes can be destroyed through MCP")
+	}
+
+	logrus.Infof("Registered %d MCP tools", tools)
 }
 
 // convertToMCPResult 将自定义的 MCPToolResult 转换为官方 SDK 的格式

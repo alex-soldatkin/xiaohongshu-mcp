@@ -107,3 +107,17 @@ func validTimezoneName(tz string) bool {
 	}
 	return true
 }
+
+// DeleteEnabled 是否开放删除笔记的能力（issue #20）。
+//
+// 删除是这个项目里唯一会销毁内容的动作，默认不暴露：没有显式设置
+// XHS_ENABLE_DELETE，MCP 工具不会注册，HTTP 接口也会拒绝。要的是"默认不可
+// 能"，而不是"默认可以但请小心"。
+func DeleteEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("XHS_ENABLE_DELETE"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}

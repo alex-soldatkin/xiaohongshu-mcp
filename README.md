@@ -1004,6 +1004,10 @@ npx mcporter list xiaohongshu-mcp
 - `favorite_feed` - 收藏/取消收藏（必需：feed_id, xsec_token）
   - `unfavorite`: 是否取消收藏（可选），true 为取消收藏，默认为收藏
 - `user_profile` - 获取用户个人主页信息（必需：user_id, xsec_token）
+- `delete_note` - 删除一篇已发布的笔记，不可恢复（必需：note_id）
+  - **默认不注册**：服务端要设置 `XHS_ENABLE_DELETE=1` 这个工具才会出现，HTTP 接口 `POST /api/v1/notes/delete` 同样返回 403
+  - 只接受具体的 `note_id`，不认"最近一篇"之类的说法；ID 从 `get_my_profile` 之类的列表接口取
+  - 与发布共用每天的 publish 额度
 
 ### 2.4. 使用示例
 

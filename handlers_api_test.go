@@ -1,16 +1,19 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-rod/rod"
 	"github.com/sirupsen/logrus"
 	logrustest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xpzouying/xiaohongshu-mcp/configs"
 	"github.com/xpzouying/xiaohongshu-mcp/pkg/pacing"
 )
 
@@ -79,5 +82,58 @@ func TestPublishRequestBindsSaveAsDraft(t *testing.T) {
 	}
 	if !vreq.SaveAsDraft {
 		t.Fatal("save_as_draft did not bind on PublishVideoRequest")
+	}
+}
+
+// TestDeleteNoteGatedByEnv 固定删除能力的三道闸门（issue #20）：
+// 默认关闭、MCP 工具不注册、HTTP 路由返回 403 而不是真去点页面。
+func TestDeleteNoteDisabledByDefault(t *testing.T) {
+	t.Setenv("XHS_ENABLE_DELETE", "")
+	if configs.DeleteEnabled() {
+		t.Fatal("删除默认应当是关闭的")
+	}
+
+	svc := NewXiaohongshuService()
+	// runHook 保证这里绝不会真的起浏览器：闸门必须在拿页面之前就拦住。
+	svc.runHook = func(ctx context.Context, class pacing.Class, fn func(page *rod.Page) error) error {
+		t.Fatal("删除未启用时不应进入浏览器路径")
+		return nil
+	}
+	if _, err := svc.DeleteNote(context.Background(), &DeleteNoteRequest{NoteID: "abc"}); err == nil {
+		t.Fatal("未启用时 DeleteNote 应当报错")
+	}
+}
+
+func TestDeleteNoteRequiresNoteID(t *testing.T) {
+	t.Setenv("XHS_ENABLE_DELETE", "1")
+	if !configs.DeleteEnabled() {
+		t.Fatal("XHS_ENABLE_DELETE=1 应当打开删除能力")
+	}
+
+	svc := NewXiaohongshuService()
+	svc.runHook = func(ctx context.Context, class pacing.Class, fn func(page *rod.Page) error) error {
+		t.Fatal("没有 note_id 时不应进入浏览器路径")
+		return nil
+	}
+	if _, err := svc.DeleteNote(context.Background(), &DeleteNoteRequest{NoteID: "   "}); err == nil {
+		t.Fatal("空 note_id 应当报错")
+	}
+}
+
+// 删除和发布一样不可撤销，必须吃同一份发布额度。
+func TestDeleteNoteIsPublishClass(t *testing.T) {
+	t.Setenv("XHS_ENABLE_DELETE", "1")
+
+	svc := NewXiaohongshuService()
+	var got pacing.Class
+	svc.runHook = func(ctx context.Context, class pacing.Class, fn func(page *rod.Page) error) error {
+		got = class
+		return nil
+	}
+	if _, err := svc.DeleteNote(context.Background(), &DeleteNoteRequest{NoteID: "695acc29000000001e02799d"}); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+	if got != pacing.ClassPublish {
+		t.Fatalf("删除记在了 %v 预算上，应为 %v", got, pacing.ClassPublish)
 	}
 }

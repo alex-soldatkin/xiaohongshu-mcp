@@ -55,6 +55,7 @@ Token 缺失或无效时，接口返回 HTTP `401 Unauthorized`。命令行参�
 | DELETE | `/api/v1/login/cookies` | 删除 Cookies（重置登录） |
 | POST | `/api/v1/publish` | 发布图文内容 |
 | POST | `/api/v1/publish_video` | 发布视频内容 |
+| POST | `/api/v1/notes/delete` | 删除已发布笔记（需 `XHS_ENABLE_DELETE=1`） |
 | GET | `/api/v1/feeds/list` | 获取 Feeds 列表 |
 | GET/POST | `/api/v1/feeds/search` | 搜索 Feeds |
 | POST | `/api/v1/feeds/detail` | 获取 Feed 详情 |
@@ -267,6 +268,47 @@ Content-Type: application/json
 - 仅支持本地视频文件路径，不支持 HTTP 链接
 - 视频处理时间较长，请耐心等待
 - 建议视频文件大小不超过 1GB
+
+---
+
+#### 3.3 删除已发布笔记
+
+从创作者中心的「笔记管理」删除一篇已发布的笔记。**删除不可恢复。**
+
+默认不开放：服务端未设置 `XHS_ENABLE_DELETE=1` 时，这个接口返回 403，MCP 侧也不会注册 `delete_note` 工具。
+
+**请求**
+```
+POST /api/v1/notes/delete
+Content-Type: application/json
+```
+
+**请求体**
+```json
+{
+  "note_id": "6aa9db22000000001400fa8e"
+}
+```
+
+**请求参数说明:**
+- `note_id` (string, required): 要删除的笔记 ID。只接受具体 ID，没有"最近一篇"之类的写法——这是有意的，避免一句含糊的指令被解析成删掉别的笔记。ID 可以从 `GET /api/v1/user/me` 的 `feeds[].id` 取
+
+**响应**
+```json
+{
+  "success": true,
+  "data": {
+    "note_id": "6aa9db22000000001400fa8e",
+    "status": "已删除"
+  },
+  "message": "删除成功"
+}
+```
+
+**注意事项:**
+- 记在 publish 预算上（默认每天 5 次），与发布共用额度
+- 笔记不在笔记管理列表里会直接报错，不会退而求其次删别的
+- 删除会等到卡片从列表消失才算成功，只点了按钮不算
 
 ---
 

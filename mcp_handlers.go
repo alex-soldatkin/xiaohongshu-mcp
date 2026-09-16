@@ -533,6 +533,26 @@ func (s *AppServer) handleUserProfile(ctx context.Context, args map[string]any) 
 	}
 }
 
+// handleDeleteNote 删除一篇已发布笔记（issue #20）。
+func (s *AppServer) handleDeleteNote(ctx context.Context, noteID string) *MCPToolResult {
+	logrus.Warnf("MCP: 删除笔记 - note_id: %s", noteID)
+
+	result, err := s.xiaohongshuService.DeleteNote(ctx, &DeleteNoteRequest{NoteID: noteID})
+	if err != nil {
+		return &MCPToolResult{
+			Content: []MCPContent{{Type: "text", Text: "删除笔记失败: " + err.Error()}},
+			IsError: true,
+		}
+	}
+
+	return &MCPToolResult{
+		Content: []MCPContent{{
+			Type: "text",
+			Text: fmt.Sprintf("笔记已删除: %s", result.NoteID),
+		}},
+	}
+}
+
 // handleLikeFeed 处理点赞/取消点赞
 func (s *AppServer) handleLikeFeed(ctx context.Context, args map[string]interface{}) *MCPToolResult {
 	feedID, ok := args["feed_id"].(string)

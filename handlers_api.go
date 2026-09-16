@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/xpzouying/xiaohongshu-mcp/configs"
 	"github.com/xpzouying/xiaohongshu-mcp/cookies"
 	myerrors "github.com/xpzouying/xiaohongshu-mcp/errors"
 	"github.com/xpzouying/xiaohongshu-mcp/xiaohongshu"
@@ -168,6 +169,33 @@ func (s *AppServer) publishVideoHandler(c *gin.Context) {
 	}
 
 	respondSuccess(c, result, "视频发布成功")
+}
+
+// deleteNoteHandler 删除已发布笔记（issue #20）。
+//
+// 能力闸门在 service 层，这里只负责把它变成一个 403 而不是 500：没开启就是
+// 没开启，跟参数错误区分开。
+func (s *AppServer) deleteNoteHandler(c *gin.Context) {
+	if !configs.DeleteEnabled() {
+		respondError(c, http.StatusForbidden, "DELETE_DISABLED",
+			"删除功能未启用", "需要设置环境变量 XHS_ENABLE_DELETE=1")
+		return
+	}
+
+	var req DeleteNoteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, "INVALID_REQUEST",
+			"请求参数错误", err.Error())
+		return
+	}
+
+	result, err := s.xiaohongshuService.DeleteNote(c.Request.Context(), &req)
+	if err != nil {
+		respondServiceError(c, "DELETE_NOTE_FAILED", "删除笔记失败", err)
+		return
+	}
+
+	respondSuccess(c, result, "删除成功")
 }
 
 // listFeedsHandler 获取Feeds列表

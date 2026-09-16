@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -501,6 +502,50 @@ func (s *XiaohongshuService) publishContent(ctx context.Context, content xiaohon
 
 		return action.Publish(ctx, content)
 	})
+}
+
+// DeleteNoteRequest 删除笔记请求。note_id 必填，且只接受 ID：这里不做
+// "最近一篇"之类的解析（issue #20）。
+type DeleteNoteRequest struct {
+	NoteID string `json:"note_id" binding:"required"`
+}
+
+// DeleteNoteResponse 删除笔记回执
+type DeleteNoteResponse struct {
+	NoteID string `json:"note_id"`
+	Status string `json:"status"`
+}
+
+// DeleteNote 从创作者中心的笔记管理里删除一篇已发布笔记（issue #20）。
+//
+// 三道闸门：能力默认关闭，由 XHS_ENABLE_DELETE 打开；必须显式给 note_id；
+// 记在 publish 预算上——删除和发布一样是不可撤销的对外动作，占同一份额度。
+func (s *XiaohongshuService) DeleteNote(ctx context.Context, req *DeleteNoteRequest) (*DeleteNoteResponse, error) {
+	if !configs.DeleteEnabled() {
+		return nil, fmt.Errorf("删除笔记功能未启用：需要设置环境变量 XHS_ENABLE_DELETE=1")
+	}
+
+	noteID := strings.TrimSpace(req.NoteID)
+	if noteID == "" {
+		return nil, fmt.Errorf("必须指定要删除的笔记 ID（note_id）")
+	}
+
+	// 自己的主页各个 tab 都会变。
+	s.cache.invalidate(ctx, store.KindMyProfile)
+
+	err := s.run(ctx, pacing.ClassPublish, func(page *rod.Page) error {
+		action, err := xiaohongshu.NewDeleteNoteAction(ctx, page)
+		if err != nil {
+			return err
+		}
+		return action.Delete(ctx, noteID)
+	})
+	if err != nil {
+		logrus.Errorf("删除笔记失败: note_id=%s %v", noteID, err)
+		return nil, err
+	}
+
+	return &DeleteNoteResponse{NoteID: noteID, Status: "已删除"}, nil
 }
 
 // PublishVideo 发布视频（本地文件）
