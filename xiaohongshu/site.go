@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -156,12 +157,48 @@ func (s Site) BrowserTimezone() string {
 	return hostTimezone()
 }
 
-// hostTimezone is the operator's own IANA zone name, or "" when the runtime
-// cannot name it (time.Local is "Local" when TZ is unset and /etc/localtime is
-// not a symlink into the zoneinfo tree).
+// localtimePath is the symlink consulted when the runtime will not name the
+// host zone. A var so the test can point it somewhere harmless.
+var localtimePath = "/etc/localtime"
+
+// hostTimezone is the operator's own IANA zone name, or "" when it cannot be
+// established at all.
+//
+// time.Local answers "Local" whenever TZ is unset, which is the normal state of
+// a desktop or a plain container — Go only carries a zone name when TZ names
+// one. Taking that as "unknown" made the rednote default unreachable in
+// practice: the empty result fell through to the browser layer's own default,
+// Asia/Shanghai, so an overseas account on an overseas exit IP reported
+// Shanghai after all, which is the incoherence #18 set out to avoid. Reading
+// the symlink recovers the name on both macOS and Linux.
 func hostTimezone() string {
-	name := time.Local.String()
-	if name == "" || name == "Local" {
+	if name := time.Local.String(); name != "" && name != "Local" {
+		return name
+	}
+	return zoneFromLocaltime(localtimePath)
+}
+
+// zoneFromLocaltime derives an IANA zone name from the /etc/localtime symlink,
+// e.g. /var/db/timezone/zoneinfo/Europe/London -> Europe/London. It returns ""
+// for a copied file rather than a link, for a destination outside a zoneinfo
+// tree, and for any name the runtime cannot then load.
+func zoneFromLocaltime(path string) string {
+	dest, err := os.Readlink(path)
+	if err != nil {
+		return ""
+	}
+
+	const marker = "zoneinfo/"
+	i := strings.LastIndex(dest, marker)
+	if i < 0 {
+		return ""
+	}
+
+	name := strings.Trim(dest[i+len(marker):], "/")
+	if name == "" {
+		return ""
+	}
+	if _, err := time.LoadLocation(name); err != nil {
 		return ""
 	}
 	return name

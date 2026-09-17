@@ -194,3 +194,37 @@ func TestSiteBrowserTimezone(t *testing.T) {
 	assert.Equal(t, "", SiteRednote.Timezone)
 	assert.Equal(t, hostTimezone(), SiteRednote.BrowserTimezone())
 }
+
+// TestZoneFromLocaltime covers the fallback that makes the rednote default
+// reachable at all. time.Local is named "Local" whenever TZ is unset, which is
+// the ordinary state of a desktop and of most containers, so without this the
+// overseas preset silently fell back to the browser's Asia/Shanghai default.
+func TestZoneFromLocaltime(t *testing.T) {
+	dir := t.TempDir()
+
+	link := filepath.Join(dir, "localtime")
+	require.NoError(t, os.Symlink("/var/db/timezone/zoneinfo/Europe/London", link))
+	assert.Equal(t, "Europe/London", zoneFromLocaltime(link))
+
+	// The Linux layout, and a trailing slash.
+	linux := filepath.Join(dir, "linux")
+	require.NoError(t, os.Symlink("/usr/share/zoneinfo/Asia/Tokyo", linux))
+	assert.Equal(t, "Asia/Tokyo", zoneFromLocaltime(linux))
+
+	// A destination outside any zoneinfo tree, a name no zone database knows,
+	// a plain file instead of a link, and a missing path all mean "unknown"
+	// rather than a guess.
+	elsewhere := filepath.Join(dir, "elsewhere")
+	require.NoError(t, os.Symlink("/etc/something", elsewhere))
+	assert.Equal(t, "", zoneFromLocaltime(elsewhere))
+
+	bogus := filepath.Join(dir, "bogus")
+	require.NoError(t, os.Symlink("/usr/share/zoneinfo/Nowhere/Nothing", bogus))
+	assert.Equal(t, "", zoneFromLocaltime(bogus))
+
+	plain := filepath.Join(dir, "plain")
+	require.NoError(t, os.WriteFile(plain, []byte("not a link"), 0o600))
+	assert.Equal(t, "", zoneFromLocaltime(plain))
+
+	assert.Equal(t, "", zoneFromLocaltime(filepath.Join(dir, "missing")))
+}
