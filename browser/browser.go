@@ -250,6 +250,7 @@ func buildOptions(cfg *browserConfig) []headless_browser.Option {
 // the same monitor rather than re-rolling it per tab.
 func pageSetupHook(cfg *browserConfig) func(*rod.Page) error {
 	g := deriveGeometry(cfg.fingerprintSeed, resolvePlatform())
+	metrics := newTextMetricsInstaller(cfg.fingerprintSeed)
 	return func(page *rod.Page) error {
 		// Headful is for a human: the QR login, and debugging. Pinning the
 		// viewport there letterboxes the page inside a differently-sized OS
@@ -266,7 +267,19 @@ func pageSetupHook(cfg *browserConfig) func(*rod.Page) error {
 		// host's — en-GB on the machine this was measured on — and the two
 		// disagreeing is the tell. --lang does not move ICU on macOS; this
 		// does, on both platforms.
-		return proto.EmulationSetLocaleOverride{Locale: launchLanguage}.Call(page)
+		if err := (proto.EmulationSetLocaleOverride{Locale: launchLanguage}).Call(page); err != nil {
+			return err
+		}
+		// Canvas text metrics (#15). The single deliberate exception to
+		// WithStealthJS(false): the bundled build returns a signed near-zero
+		// for every TextMetrics field, which no flag can fix and which is
+		// visible to ordinary layout code. Calibrated here on about:blank and
+		// injected before the first navigation. A failure is logged, not
+		// fatal — an unrepaired browser is the status quo, not a broken one.
+		if err := metrics.install(page); err != nil {
+			logrus.Warnf("canvas text metrics shim not installed (#15): %v", err)
+		}
+		return nil
 	}
 }
 

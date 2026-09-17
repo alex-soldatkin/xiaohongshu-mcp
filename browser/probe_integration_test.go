@@ -254,9 +254,9 @@ const probeJS = `async () => {
   // Font probe: rendered width of a wide/narrow mix at 72px against the
   // monospace fallback. Equal width == the named family was not resolved.
   //
-  // Measured through the DOM (offsetWidth), NOT canvas measureText: this build
-  // returns ~0 from measureText (see canvasMeasureText below), so the canvas
-  // route cannot distinguish any two fonts.
+  // Measured through the DOM (offsetWidth), not canvas measureText. The raw
+  // build returns ~0 from measureText (#15), and although the shim repairs that,
+  // the DOM route is the one that needs no repair to be trusted.
   try {
     const FONTS = ['Arial', 'Helvetica', 'SimSun', 'Microsoft YaHei',
                    'PingFang SC', 'Times New Roman', 'WenQuanYi Zen Hei'];
@@ -280,9 +280,9 @@ const probeJS = `async () => {
     s.remove();
   } catch (e) { out.fonts = []; out.fontBaseline = -1; }
 
-  // Canvas text metrics. Real Chrome returns ~564 for this string at 72px
-  // monospace; this build returns a near-zero float for every string, so
-  // measureText carries no information and is itself an anomaly.
+  // Canvas text metrics (#15). Real Chrome returns ~564 for this string at 72px
+  // monospace; the raw build returns a near-zero float for every string. With
+  // the shim installed this reads as a real width again.
   try {
     const x = document.createElement('canvas').getContext('2d');
     x.font = '72px monospace';
@@ -501,10 +501,11 @@ func buildRows(r probeResult) []row {
 	add("WebGL UNMASKED_RENDERER", r.WebGLRenderer, vInfo+" (seed-derived)")
 	add("WebGL VERSION", r.WebGLVersion, vInfo)
 	add("canvas hash (djb2 of dataURL)", fmt.Sprintf("%s (len %d)", r.CanvasHash, r.CanvasLen), vInfo+" (stable per seed)")
-	// Not tracked by any issue yet: the binary zeroes canvas text metrics.
-	cm := vInfo
-	if r.CanvasMeasureText > -1 && r.CanvasMeasureText < 1 {
-		cm = vBroken + " (real Chrome ~564; always ~0 here, untracked)"
+	// #15: the build scales every TextMetrics field to a signed near-zero; the
+	// shim in textmetrics.go undoes it. Gated in detail by TestProbeTextMetrics.
+	cm := vClean + " (#15 repaired; real Chrome ~564)"
+	if r.CanvasMeasureText < 1 {
+		cm = vBroken + " (#15: shim not applied, metrics still zeroed)"
 	}
 	add("canvas measureText width (72px mono)", fmt.Sprintf("%.6f px", r.CanvasMeasureText), cm)
 
@@ -679,6 +680,10 @@ func TestProbeBaseline(t *testing.T) {
 	}
 	if res.ICULocale != res.Language {
 		t.Errorf("#9: ICU locale %q disagrees with navigator.language %q", res.ICULocale, res.Language)
+	}
+	if res.CanvasMeasureText < 1 {
+		t.Errorf("#15: canvas measureText returned %g px for the 72px monospace probe; the text-metrics shim is not in effect",
+			res.CanvasMeasureText)
 	}
 
 	// Still open, logged rather than failed.

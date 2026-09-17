@@ -9,6 +9,7 @@ This is a hard fork of `xpzouying/xiaohongshu-mcp`. The sections below in Chines
 - **Never `git add -A`, `git add .`, or `git commit -a`.** Stage explicit paths; prefer `git commit -- <paths>`. Concurrent agents have swallowed each other's changesets three times; pathspec-scoped commits are the only safe form here.
 - **Never commit `cookies.json` or `profile/`.** Both are gitignored and hold a live logged-in session. `profile/` was untracked-but-unignored at one point, one `git add -A` away from publishing an account session to a public repo.
 - **Read `#16` before adding any Chrome flag or CDP call.** It records what is broken, dangerous or silently ineffective on the bundled browser build — including a flag that crashes it outright and an input field that triggers a 15,000-event-per-second keystroke storm.
+- **There is exactly one JS shim, and it is `browser/textmetrics.go`.** `WithStealthJS(false)` still stands: JS shims contradict the patched binary and the fork does not add them. The canvas text-metrics repair (#15) is the single measured exception, because no flag can reach the bug and the bug is visible to ordinary layout code. Keep it narrow — `TextMetrics` accessors only — and do not treat it as a precedent without measuring the alternative first.
 - **Before touching anything LLM-, fingerprint- or site-shaped, check what has already been measured.** A great deal of this codebase's behaviour was established empirically against a live account, and the issues carry the evidence. Re-deriving it costs real account risk.
 
 ### Environment
