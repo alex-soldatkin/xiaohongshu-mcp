@@ -543,6 +543,7 @@ and behaves exactly as before.
 | `XHS_CACHE_TTL_NOTIFICATIONS` | `5m` | notification listings |
 | `XHS_CACHE_TTL_UNREAD` | `2m` | the unread counters |
 | `XHS_CACHE_RETENTION` | `720h` | how long a cached document may sit before it is swept |
+| `XHS_XSEC_TOKEN_LIFETIME` | `1h` | how long an `xsec_token` off a listing is assumed to work; caps the listing TTLs above, `0` disables the cap |
 
 Set it and the server connects at startup, applies its schema migrations
 itself, and logs the URL with the password masked. A URL that is set but
@@ -561,6 +562,16 @@ pacing gate, so a hit costs neither the 3-8 second pause between actions nor a
 request against the account's hourly read budget — which is the point: data you
 already hold should not be re-fetched, both because it is slow and because the
 re-fetch is traffic.
+
+Listings are capped by a second knob. Every note in a listing arrives with an
+`xsec_token` the agent then uses to open it, so a listing served past the
+token's lifetime hands out arguments that fail. A token was measured still
+working an hour after it was captured (issue #18), and nothing beyond an hour
+was tested, so `XHS_XSEC_TOKEN_LIFETIME` defaults to that hour and caps the
+feed, search, profile and notification TTLs at it — in practice only the
+6-hour `XHS_CACHE_TTL_PROFILE` moves, and the server says so at startup when it
+does. Note details are not capped: nothing navigates with the token inside a
+note detail.
 
 The notification history is queryable. Pass `since_cursor: "start"` to
 `list_notifications` for a first sync, then hand back the `history.next_cursor`

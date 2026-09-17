@@ -86,6 +86,36 @@ func defaultCacheTTLs() map[store.Kind]time.Duration {
 	}
 }
 
+// xsecTokenLifetime is how long an xsec_token taken off a listing is assumed to
+// keep working, and therefore the ceiling on how long a listing that carries
+// one may be served from the cache (issue #18, workstream F).
+//
+// A listing's value is not only its text: every note in it comes with a token
+// the agent then uses to open that note. Serving a listing whose tokens have
+// expired hands out arguments that fail. The measurement in #18 settled what
+// was previously a guess — a token captured off the explore listing still
+// opened its note an hour later, from a cold navigation, with no error
+// wrapper, and the same note ids carried byte-identical tokens across two
+// renders forty seconds apart. So the value is a measured lower bound, not a
+// margin: one hour is what was observed to work, and nothing beyond it was
+// tested. Zero means "unknown", which applies no clamp at all — that was the
+// value this knob carried before the measurement existed.
+//
+// Note detail documents are deliberately not clamped. Nothing navigates with
+// FeedDetail.XsecToken, so a six-hour-old note detail is stale text at worst,
+// never a broken argument.
+const xsecTokenLifetime = time.Hour
+
+// xsecTokenKinds are the cached documents that carry tokens a caller goes on
+// to navigate with.
+var xsecTokenKinds = []store.Kind{
+	store.KindFeed,
+	store.KindSearch,
+	store.KindProfile,
+	store.KindMyProfile,
+	store.KindNotifications,
+}
+
 // cacheConfig is the TTL table plus the retention window, after env overrides.
 type cacheConfig struct {
 	TTLs      map[store.Kind]time.Duration
@@ -106,7 +136,33 @@ func cacheConfigFromEnv() cacheConfig {
 		cfg.Retention = d
 	}
 
+	lifetime := xsecTokenLifetime
+	if d, ok := cacheEnvDuration("XHS_XSEC_TOKEN_LIFETIME"); ok {
+		lifetime = d
+	}
+	cfg.clampToTokenLifetime(lifetime)
 	return cfg
+}
+
+// clampToTokenLifetime caps the listing TTLs at the token lifetime, and says so
+// once at startup. An operator who set XHS_CACHE_TTL_PROFILE=6h and finds
+// profiles being refetched hourly should be able to find out why from the log
+// rather than from this file.
+//
+// Only the configured 6-hour profile TTLs exceed the measured lifetime; the
+// rest of the table is minutes and passes through untouched.
+func (cfg cacheConfig) clampToTokenLifetime(lifetime time.Duration) {
+	if lifetime <= 0 {
+		return
+	}
+	for _, kind := range xsecTokenKinds {
+		ttl, ok := cfg.TTLs[kind]
+		if !ok || ttl <= lifetime {
+			continue
+		}
+		cfg.TTLs[kind] = lifetime
+		logrus.Infof("cache: %s TTL clamped from %s to %s, the assumed xsec_token lifetime", kind, ttl, lifetime)
+	}
 }
 
 // cacheEnvDuration accepts a Go duration ("30m") or a bare number of seconds,

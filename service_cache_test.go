@@ -996,3 +996,49 @@ func TestForceRefreshMiddleware(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// xsec_token lifetime clamp (issue #18, workstream F)
+// ---------------------------------------------------------------------------
+
+// A listing is not just text: every note in it carries a token the agent then
+// navigates with. Serving one past the token's measured lifetime hands out
+// arguments that fail, so the listing TTLs are capped at it. Note details are
+// not, because nothing navigates with FeedDetail.XsecToken.
+func TestTokenLifetimeClampsListingTTLs(t *testing.T) {
+	cfg := cacheConfig{TTLs: defaultCacheTTLs()}
+	require.Equal(t, defaultTTLProfile, cfg.TTLs[store.KindProfile])
+
+	cfg.clampToTokenLifetime(time.Hour)
+
+	assert.Equal(t, time.Hour, cfg.TTLs[store.KindProfile],
+		"the 6h profile TTL is the one the measurement in #18 does not cover")
+	assert.Equal(t, defaultTTLMyProfile, cfg.TTLs[store.KindMyProfile], "already inside the window")
+	assert.Equal(t, defaultTTLFeed, cfg.TTLs[store.KindFeed])
+	assert.Equal(t, defaultTTLSearch, cfg.TTLs[store.KindSearch])
+	assert.Equal(t, defaultTTLNotifications, cfg.TTLs[store.KindNotifications])
+	assert.Equal(t, defaultTTLNote, cfg.TTLs[store.KindNote], "note details are never clamped")
+	assert.Equal(t, defaultTTLNote, cfg.TTLs[store.KindNoteFull])
+}
+
+// Zero is the "unknown lifetime" setting the knob shipped with before the
+// measurement existed, and it must clamp nothing at all.
+func TestTokenLifetimeZeroClampsNothing(t *testing.T) {
+	cfg := cacheConfig{TTLs: defaultCacheTTLs()}
+	cfg.clampToTokenLifetime(0)
+	assert.Equal(t, defaultTTLProfile, cfg.TTLs[store.KindProfile])
+}
+
+func TestTokenLifetimeIsConfigurable(t *testing.T) {
+	t.Setenv("XHS_XSEC_TOKEN_LIFETIME", "10m")
+	cfg := cacheConfigFromEnv()
+	assert.Equal(t, 10*time.Minute, cfg.TTLs[store.KindProfile])
+	assert.Equal(t, 5*time.Minute, cfg.TTLs[store.KindFeed], "a shorter TTL is left where it is")
+
+	t.Setenv("XHS_XSEC_TOKEN_LIFETIME", "0")
+	assert.Equal(t, defaultTTLProfile, cacheConfigFromEnv().TTLs[store.KindProfile])
+
+	t.Setenv("XHS_XSEC_TOKEN_LIFETIME", "")
+	assert.Equal(t, xsecTokenLifetime, cacheConfigFromEnv().TTLs[store.KindProfile],
+		"unset means the measured default, not no clamp")
+}
