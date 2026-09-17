@@ -37,6 +37,11 @@ type Site struct {
 	// UK-registered account on a UK egress IP has no business claiming
 	// Shanghai. Language stays zh-CN on both; the rednote UI is Chinese.
 	Timezone string
+	// ConsentAcceptSelector is the cookie banner's accept button, empty when
+	// the deployment has no banner. See consent.go: on rednote the banner
+	// comes with a full-viewport overlay that intercepts every click, and
+	// consent is stored in the browser profile rather than in the cookie jar.
+	ConsentAcceptSelector string
 }
 
 // The two known deployments.
@@ -46,6 +51,8 @@ var (
 		Domain:   "xiaohongshu.com",
 		NotePath: "/explore/%s",
 		Timezone: "Asia/Shanghai",
+		// 大陆站没有 cookie 横幅
+		ConsentAcceptSelector: "",
 	}
 
 	SiteRednote = Site{
@@ -53,6 +60,8 @@ var (
 		Domain:   "rednote.com",
 		NotePath: "/discovery/item/%s",
 		Timezone: "", // follow the operator's host zone
+
+		ConsentAcceptSelector: "button.cookie-banner__btn--primary",
 	}
 )
 

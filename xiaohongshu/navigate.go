@@ -90,6 +90,15 @@ func navigateFrom(ctx context.Context, page *rod.Page, url, referrer string, wai
 		}
 	}
 
+	// One click per profile, and only where the deployment has a banner. It
+	// goes after the load wait because the banner is rendered by the page,
+	// and before the risk check because a blocked page is not a flagged one.
+	if wait >= navWaitLoad {
+		if err := dismissConsent(ctx, page); err != nil {
+			return err
+		}
+	}
+
 	// Every deep link lands here, which makes this the one place where a
 	// redirect to a captcha or a security interstitial can be caught for the
 	// whole codebase (issue #11). A challenge reported here is the difference
