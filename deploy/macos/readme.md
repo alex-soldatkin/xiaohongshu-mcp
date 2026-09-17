@@ -54,6 +54,33 @@ overrides). Three consequences for a launchd deployment:
   reports the pid, and killing that process is enough — do not delete the
   profile.
 
+### Site and environment in the plist
+
+The plist as shipped has no `EnvironmentVariables` key, so a launchd service
+starts with launchd's environment and not your shell's. An overseas (rednote)
+deployment needs at least the site, and usually the zone, set there:
+
+```xml
+<key>EnvironmentVariables</key>
+<dict>
+    <key>XHS_SITE</key>
+    <string>rednote</string>
+    <key>XHS_TIMEZONE</key>
+    <string>Europe/London</string>
+</dict>
+```
+
+Without it the server falls back to the `site` recorded in `cookies.json`, which
+is right whenever the session was established with `cmd/login -site=rednote` and
+wrong the first time somebody starts from an empty working directory. The
+resolved site and timezone are both logged at startup; `StandardOutPath` is
+where to look.
+
+Reminder from the section above, because it bites hardest here: `cmd/login` must
+not run while the service is up. One Chrome process per profile, and launchd
+will happily restart the service underneath you — `launchctl stop xhsmcp` first,
+log in, then start it again.
+
 ### Shell 脚本管理 （进阶用法）
 
 如果你使用 fish shell，可以安装该目录下的 xhsmcp.fish，实现类似这样的效果：

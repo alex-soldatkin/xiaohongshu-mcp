@@ -446,6 +446,43 @@ Windows 遇到问题首先看这里：[Windows 安装指南](./docs/windows_guid
 
 ### 1.2. 登录
 
+**Before you log in, decide which site you are on.** This tool drives two
+deployments of the same application: `xiaohongshu.com`, the mainland site, and
+`rednote.com`, the international one. They are separate deployments with
+separate sessions. An account registered outside China lives on rednote and
+cannot log into `xiaohongshu.com` at all — the QR scan is refused with a message
+saying so — and cookies do not cross the two domains, so a session on one is
+worthless on the other.
+
+```bash
+# Log in to the international deployment
+go run cmd/login/main.go -site=rednote
+
+# Start the server against it
+XHS_SITE=rednote go run .
+```
+
+The value is a preset name, `xiaohongshu` or `rednote`, never a raw domain. Each
+preset carries the domain, the note URL shape (`/explore/<id>` against
+`/discovery/item/<id>`), the browser timezone default and the cookie-consent
+selector, because half of what differs between the two deployments is not the
+hostname.
+
+The site is resolved once at startup and the server logs which rule decided it:
+the `-site` flag first, then `XHS_SITE`, then the `site` field recorded in the
+session file, then the domain of the cookies in that file, and finally
+`xiaohongshu` as the default. An explicit choice that contradicts the cookies
+you already hold is fatal rather than a warning, because the failure it prevents
+is expensive: a rednote jar pointed at the mainland site renders a login modal
+on every page, the risk detector reads that as a dead session, and the account
+spends the next thirty minutes in cooldown.
+
+The preset also sets the browser timezone. The mainland deployment reports
+`Asia/Shanghai`; rednote follows the machine it runs on, since an overseas
+account on an overseas exit IP reporting Shanghai is the same incoherence with
+the sign reversed. `XHS_TIMEZONE` overrides both — and in Docker it usually has
+to, see the timezone note in the configuration reference below.
+
 第一次需要手动登录，需要保存小红书的登录状态。
 
 **使用二进制文件**：
@@ -628,6 +665,72 @@ go run . -token=your-secret-token
   }
 }
 ```
+
+**Configuration reference**:
+
+Everything the server reads, in one place. The browser-profile, persistence and
+cache variables are described above and are listed here only for completeness.
+
+Site, session and identity:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `XHS_SITE` | `xiaohongshu` | deployment preset, `xiaohongshu` or `rednote`; loses to the `-site` flag, beats the session file |
+| `COOKIES_PATH` | `./cookies.json` | the session file, which also anchors `profile/` and `pacing_state.json` |
+| `XHS_PROFILE_DIR` | `profile/` beside the session file | Chrome user-data directory |
+| `XHS_FP_SEED` | from the session file, else generated | pins the browser fingerprint, so one account keeps one machine across restarts; positive integer |
+| `XHS_TIMEZONE` | the site preset's zone | IANA name, e.g. `Europe/London`; overrides the preset |
+| `XHS_PROXY` | unset | `http://`, `https://` or `socks5://`, credentials allowed and masked in the logs |
+
+Browser lifecycle: `XHS_BROWSER_IDLE` (`10m`), `XHS_BROWSER_MAX_PAGES` (`200`),
+`XHS_BROWSER_MAX_AGE` (`24h`); `0` disables a policy. See the browser-profile
+section above.
+
+Pacing and risk control. The tool paces itself on purpose: one action at a time,
+a randomised pause before each, and hourly and daily budgets. The defaults are
+deliberately slower than a script would like and roughly what a person does, and
+raising them is the most direct way to make an account look automated.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `XHS_MIN_GAP_MS` | `3000` | floor of the randomised pause before every action, in milliseconds; also rescales the ceiling; `0` removes the pause |
+| `XHS_MAX_READS_PER_HOUR` | `120` | hourly read budget; `0` is unlimited |
+| `XHS_MAX_WRITES_PER_HOUR` | `20` | hourly write budget; `0` is unlimited |
+| `XHS_MAX_WRITES_PER_DAY` | `100` | daily write budget; `0` is unlimited |
+| `XHS_MAX_PUBLISH_PER_DAY` | `5` | daily publish budget, shared with delete; `0` is unlimited |
+| `XHS_GATE_MAX_WAIT` | `30s` | how long a call waits for the single action slot before it is refused with 429 |
+| `XHS_RISK_COOLDOWN` | `30m` | how long the account rests after a risk-control signal |
+| `XHS_PACING_STATE` | `pacing_state.json` beside the session file | where the budget counters are persisted, so a restart does not reset them |
+| `XHS_FAKE_RISK_CONTROL` | unset | set to `1` to force a synthetic risk signal and exercise the whole cooldown path; a test switch, not an operational one |
+
+Capabilities and access:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `XHS_ENABLE_DELETE` | off | `1`, `true`, `yes` or `on` registers the `delete_note` tool; otherwise it is not exposed at all and the HTTP route answers 403 |
+| `AUTH_TOKEN` | unset | bearer token for the HTTP and MCP endpoints; unset disables authentication |
+| `XHS_DATABASE_URL` | unset | PostgreSQL DSN; unset means no persistence and no caching |
+
+Durations accept a Go duration (`90m`) or a bare number of seconds (`5400`).
+Anything malformed is reported in the log and ignored rather than silently
+treated as zero.
+
+Command-line flags:
+
+| Flag | Binary | Default | Meaning |
+|---|---|---|---|
+| `-headless` | server | `true` | run the browser without a window |
+| `-port` | server | `:18060` | listen address |
+| `-token` | server | empty | bearer token; a non-empty value beats `AUTH_TOKEN` |
+| `-site` | `cmd/login` | empty | deployment preset; beats `XHS_SITE` and the session file |
+
+**A note on timezones in Docker**: the image sets `TZ=Etc/UTC` and the rednote
+preset follows the container's zone, so a rednote deployment in Docker reports
+UTC unless you say otherwise. UTC is coherent but it is not where you are. Pass
+your real zone — `-e TZ=Europe/London`, or `-e XHS_TIMEZONE=Europe/London` to
+move the browser alone — so that the browser's clock agrees with the exit IP the
+site sees. Mainland deployments need nothing: that preset pins `Asia/Shanghai`
+regardless of the container.
 
 ## 1.4. 验证 MCP
 

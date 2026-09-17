@@ -121,6 +121,48 @@ environment:
 Using proxy: http://***:***@proxy:port
 ```
 
+## 4.4 Which site, and what time it is there (`XHS_SITE`, `TZ`)
+
+The image drives two deployments of the same application: `xiaohongshu.com`, the
+mainland site, and `rednote.com`, the international one. An account registered
+outside China lives on rednote and cannot log into `xiaohongshu.com` at all, so
+this is the first thing to get right — nothing downstream runs if the session
+cannot be established.
+
+```yaml
+environment:
+  - XHS_SITE=rednote
+```
+
+The value is a preset name, `xiaohongshu` or `rednote`, not a domain. The
+container resolves it once at startup and logs which rule decided it: `XHS_SITE`
+first, then the `site` field in the mounted `cookies.json`, then the domain of
+the cookies themselves. A session file that contradicts `XHS_SITE` stops the
+server rather than guessing, because the alternative costs the account a
+thirty-minute risk-control cooldown on its first two page loads.
+
+Logging in has to happen against the same site. `cmd/login` takes `-site`, and
+the session it writes records the choice, so a jar restored into the container
+already carries the answer.
+
+**Timezone.** The image sets `TZ=Etc/UTC`. This is deliberate: the rednote
+preset takes its browser timezone from the host, and an image that names itself
+`Asia/Shanghai` — as this one used to — makes an overseas account report
+Shanghai from a London server, which is precisely the mismatch the preset exists
+to avoid. Mainland deployments are unaffected either way, since that preset pins
+`Asia/Shanghai` in the browser regardless of the container.
+
+UTC is coherent but it is not where you are. Pass your real zone:
+
+```yaml
+environment:
+  - TZ=Europe/London          # container clock, logs, and the rednote default
+  - XHS_TIMEZONE=Europe/London # the browser only, overriding the preset
+```
+
+The zone the browser ends up reporting is logged at startup, so it can be
+checked rather than assumed.
+
 ## 4.5 Browser profile (persistent session)
 
 The container keeps one browser alive with a persistent Chrome profile. With the

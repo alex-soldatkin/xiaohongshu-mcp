@@ -18,5 +18,15 @@ services:
       - HOME=/app/data/home
       - XDG_CONFIG_HOME=/app/data/config
       - AUTH_TOKEN=${AUTH_TOKEN:-}
+      # Deployment: xiaohongshu.com (default) or rednote.com. An account
+      # registered outside China lives on rednote and cannot log into the
+      # mainland site at all. The login tool records the choice in cookies.json,
+      # so this only has to be set when starting from an empty data directory --
+      # but setting it is free and it fails loudly if the two disagree.
+      # - XHS_SITE=rednote
+      # The image runs on UTC. The rednote preset follows the container's zone,
+      # so an overseas deployment should name its real one; the browser's clock
+      # ought to agree with the exit IP the site sees.
+      # - TZ=Europe/London
     ports:
       - "18060:18060"

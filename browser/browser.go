@@ -22,9 +22,12 @@ const launchLanguage = "zh-CN"
 //
 // Deliberately not the host zone: the target site is Chinese, the egress IP is
 // meant to be Chinese and navigator.languages says zh-CN, so a browser
-// reporting Europe/London is a one-line mismatch check. Docker already sets
-// ENV TZ=Asia/Shanghai, so the flag agrees with the container rather than
-// fighting it.
+// reporting Europe/London is a one-line mismatch check.
+//
+// It is the last fallback, not the usual path: the site preset decides the zone
+// (mainland pins this one, rednote follows the host) and XHS_TIMEZONE overrides
+// both. The Docker image no longer bakes a zone into itself for the same
+// reason — see the timezone note in docker/README.md.
 const DefaultTimezone = "Asia/Shanghai"
 
 type browserConfig struct {

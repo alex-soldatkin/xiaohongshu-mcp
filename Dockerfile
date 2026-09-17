@@ -19,8 +19,22 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.versi
 # ---- run stage ----
 FROM ubuntu:22.04
 
-# 设置时区
-ENV TZ=Asia/Shanghai
+# Timezone. Deliberately UTC rather than Asia/Shanghai: the rednote preset
+# follows the host zone, and a container that names itself Shanghai makes an
+# overseas account report Shanghai no matter where it is operated from, which is
+# exactly the incoherence the preset exists to prevent. The mainland preset pins
+# Asia/Shanghai in the browser on its own and does not depend on this value.
+#
+# Operators of an overseas deployment should pass their real zone, since the
+# browser's clock should agree with the exit IP the site sees:
+#   docker run -e TZ=Europe/London ...      (container and browser)
+#   docker run -e XHS_TIMEZONE=Europe/London ...  (browser only)
+#
+# tzdata is installed below; the link is made here as well so tzdata's own
+# postinst configures itself from it instead of prompting during the build.
+ENV TZ=Etc/UTC
+# Build-only: ARG rather than ENV, so the running container does not inherit it.
+ARG DEBIAN_FRONTEND=noninteractive
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 WORKDIR /app
@@ -77,6 +91,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxtst6 \
     lsb-release \
     tini \
+    tzdata \
     wget \
     xdg-utils \
     xz-utils \
