@@ -1,6 +1,7 @@
 package xiaohongshu
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -71,17 +72,21 @@ func TestParseNoteLinks(t *testing.T) {
 // notification page has told us where its notes come from, opening one no
 // longer falls back to claiming it came from the feed.
 func TestNoteSourceFromNotificationLink(t *testing.T) {
+	ctx := context.Background()
 	const id = "65a1b2c3d4e5f60718293a4c"
 
-	source, referrer := feedEntryPoint(id)
+	SetNoteSources(nil)
+	t.Cleanup(func() { SetNoteSources(nil) })
+
+	source, referrer := feedEntryPoint(ctx, id)
 	require.Equal(t, xsecSourceFeed, source, "with no record, the honest default")
 	require.Equal(t, urlExplore, referrer)
 
 	for _, link := range parseNoteLinks([]string{"/explore/" + id + "?xsec_token=ABC&xsec_source=pc_notification"}) {
-		noteSources.remember(link.id, link.source, urlNotification)
+		rememberNoteSource(ctx, link.id, link.source, urlNotification)
 	}
 
-	source, referrer = feedEntryPoint(id)
+	source, referrer = feedEntryPoint(ctx, id)
 	assert.Equal(t, "pc_notification", source)
 	assert.Equal(t, urlNotification, referrer)
 }

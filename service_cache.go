@@ -105,6 +105,7 @@ func cacheConfigFromEnv() cacheConfig {
 	if d, ok := cacheEnvDuration("XHS_CACHE_RETENTION"); ok {
 		cfg.Retention = d
 	}
+
 	return cfg
 }
 
@@ -133,6 +134,11 @@ type serviceCache struct {
 	store   store.Store
 	enabled bool
 	cfg     cacheConfig
+
+	// noteSources is the optional note-provenance capability, nil when the
+	// backend does not offer it. Type-asserted once at construction rather
+	// than on every call.
+	noteSources store.NoteSourceStore
 
 	// now is the clock. Tests replace it; production never does.
 	now func() time.Time
@@ -172,6 +178,9 @@ func newServiceCache(st store.Store) *serviceCache {
 		return c
 	}
 	c.enabled = true
+	if ns, ok := st.(store.NoteSourceStore); ok {
+		c.noteSources = ns
+	}
 	return c
 }
 
@@ -383,6 +392,17 @@ func (c *serviceCache) prune() {
 	}
 	if n > 0 {
 		logrus.Infof("cache: retention sweep removed %d documents older than %s", n, c.cfg.Retention)
+	}
+
+	// Provenance records have their own, much shorter window: past it the
+	// record can never be claimed again, so keeping it only grows the table.
+	if c.noteSources == nil {
+		return
+	}
+	if n, err := c.noteSources.PruneNoteSources(ctx, xiaohongshu.NoteSourceTTL); err != nil {
+		logrus.Warnf("cache: note-source sweep failed: %v", err)
+	} else if n > 0 {
+		logrus.Debugf("cache: note-source sweep removed %d records older than %s", n, xiaohongshu.NoteSourceTTL)
 	}
 }
 

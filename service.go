@@ -75,6 +75,15 @@ func NewXiaohongshuService(opts ...ServiceOption) *XiaohongshuService {
 	xiaohongshu.SetRiskCooldownHook(gate.Cooldown)
 
 	cache := newServiceCache(options.store)
+	// Note provenance (issue #10) moves into the store when the backend offers
+	// it, so a restart stops claiming "came from the feed" for notes whose
+	// listing is still being served from the cache. Without a store — or with
+	// a backend that does not implement the capability — the xiaohongshu
+	// package keeps its in-memory table and nothing changes.
+	if ns := newStoreNoteSources(cache); ns != nil {
+		xiaohongshu.SetNoteSources(ns)
+		logrus.Info("note source: provenance recorded in the store")
+	}
 	// Recovering the account from the fingerprint seed costs one query and
 	// saves the first read from having to discover it. A fresh database simply
 	// leaves the account unknown until the first successful read observes it.
@@ -706,6 +715,12 @@ func (s *XiaohongshuService) GetFeedDetailWithConfig(ctx context.Context, feedID
 		return nil, err
 	}
 
+	if !cached {
+		// Comments enter the history log flattened, one row per comment and
+		// per reply. Only a live fetch has anything new to record.
+		s.cache.appendComments(ctx, feedID, result.Comments.List)
+	}
+
 	return &FeedDetailResponse{
 		FeedID:    feedID,
 		Data:      result,
@@ -854,11 +869,19 @@ func (s *XiaohongshuService) GetUnreadCount(ctx context.Context) (*UnreadCountRe
 	}, nil
 }
 
-// ListNotifications 获取指定分区的通知列表
-func (s *XiaohongshuService) ListNotifications(ctx context.Context, tab string, limit int) (*NotificationListResponse, error) {
+// ListNotifications 获取指定分区的通知列表。
+//
+// sinceCursor 非空时走历史增量：先照常拉一次列表（可能命中缓存）把历史补齐，
+// 再只返回该游标之后的新通知。没有配置存储时直接报错，而不是悄悄当作全量返回。
+func (s *XiaohongshuService) ListNotifications(ctx context.Context, tab string, limit int, sinceCursor string) (*NotificationListResponse, error) {
 	parsed, err := xiaohongshu.ParseNotificationTab(tab)
 	if err != nil {
 		return nil, err
+	}
+	if sinceCursor != "" && !s.cache.enabled {
+		// Refused before the browser is touched: an unusable argument should
+		// not cost a page load and a slice of the account's read budget.
+		return nil, errNoHistoryStore
 	}
 
 	result, fetchedAt, cached, err := readThrough(ctx, s,
@@ -878,15 +901,39 @@ func (s *XiaohongshuService) ListNotifications(ctx context.Context, tab string, 
 			result.Items = result.Items[:limit]
 		}
 	} else {
+		// Only a live listing has anything to teach the history log.
+		s.cache.appendNotifications(ctx, parsed, result.Items)
+
 		// The live listing cleared this tab's unread marks on the site, so a
 		// cached unread count is now a lie. Drop it.
 		s.cache.invalidate(ctx, store.KindUnread)
 	}
 
-	return &NotificationListResponse{
+	response := &NotificationListResponse{
 		NotificationList: result,
 		CacheMeta:        newCacheMeta(fetchedAt, cached),
-	}, nil
+	}
+	if sinceCursor == "" {
+		return response, nil
+	}
+
+	items, next, err := s.cache.notificationsSince(ctx, parsed, sinceCursor, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// The listing itself was only a means of refreshing the history; what the
+	// caller asked for is the difference. Copied rather than mutated in place,
+	// because result may point at the freshly stored document.
+	listing := *result
+	listing.Items = items
+	response.NotificationList = &listing
+	response.History = &NotificationHistory{
+		SinceCursor: sinceCursor,
+		NextCursor:  next,
+		New:         len(items),
+	}
+	return response, nil
 }
 
 // LikeNotification 给通知里的评论点赞或取消点赞

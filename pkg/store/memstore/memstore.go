@@ -41,6 +41,12 @@ type histKey struct {
 	id    string
 }
 
+// noteSourceKey identifies one provenance record.
+type noteSourceKey struct {
+	account string
+	feedID  string
+}
+
 type histRow struct {
 	seq       uint64
 	payload   json.RawMessage
@@ -62,13 +68,23 @@ type Store struct {
 	comments      map[histKey]*histRow
 	seq           uint64
 
+	// noteSources is the optional NoteSourceStore capability, keyed by
+	// account and feed id.
+	noteSources map[noteSourceKey]store.NoteSource
+
 	// now is overridable so retention and last-seen ordering can be tested
 	// without sleeping.
 	now func() time.Time
 }
 
-// Store implements store.Store.
-var _ store.Store = (*Store)(nil)
+// Store implements store.Store, and the optional NoteSourceStore capability
+// on top of it: the note-source seam (issue #7, WS4) needs somewhere hermetic
+// to be tested against, and the contract suite checks the capability wherever
+// a backend offers it.
+var (
+	_ store.Store           = (*Store)(nil)
+	_ store.NoteSourceStore = (*Store)(nil)
+)
 
 // New returns an empty in-memory store.
 func New() *Store {
@@ -77,6 +93,7 @@ func New() *Store {
 		accounts:      map[string]store.Account{},
 		notifications: map[histKey]*histRow{},
 		comments:      map[histKey]*histRow{},
+		noteSources:   map[noteSourceKey]store.NoteSource{},
 		now:           time.Now,
 	}
 }
@@ -307,6 +324,53 @@ func (s *Store) PruneDocs(_ context.Context, olderThan time.Duration) (int64, er
 	for k, doc := range s.docs {
 		if doc.FetchedAt.Before(cutoff) {
 			delete(s.docs, k)
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (s *Store) RememberNoteSource(_ context.Context, account string, src store.NoteSource) error {
+	if src.SeenAt.IsZero() {
+		src.SeenAt = s.clock()
+	}
+	src.SeenAt = normalizeTime(src.SeenAt)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.noteSources[noteSourceKey{account, src.FeedID}] = src
+	return nil
+}
+
+func (s *Store) LookupNoteSource(_ context.Context, account, feedID string, maxAge time.Duration) (store.NoteSource, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	src, ok := s.noteSources[noteSourceKey{account, feedID}]
+	if !ok {
+		return store.NoteSource{}, store.ErrNotFound
+	}
+	if maxAge > 0 && s.now().Sub(src.SeenAt) > maxAge {
+		// Refused rather than returned with its age attached: a caller that
+		// has to check the age itself will one day forget to.
+		return store.NoteSource{}, store.ErrNotFound
+	}
+	return src, nil
+}
+
+func (s *Store) PruneNoteSources(_ context.Context, olderThan time.Duration) (int64, error) {
+	if olderThan <= 0 {
+		return 0, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cutoff := s.now().Add(-olderThan)
+	var n int64
+	for k, src := range s.noteSources {
+		if src.SeenAt.Before(cutoff) {
+			delete(s.noteSources, k)
 			n++
 		}
 	}

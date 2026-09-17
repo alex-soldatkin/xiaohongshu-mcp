@@ -120,7 +120,7 @@ func (u *UserProfileAction) extractUserProfileData(ctx context.Context, page *ro
 	}
 
 	// Notes listed on a profile carry pc_note, not pc_feed.
-	noteSources.rememberFeeds(response.Feeds, xsecSourceNote, currentURL(page))
+	rememberFeedSources(ctx, response.Feeds, xsecSourceNote, currentURL(page))
 
 	return response, nil
 }

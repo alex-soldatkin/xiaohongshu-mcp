@@ -103,6 +103,23 @@ type FeedDetailResponse struct {
 type NotificationListResponse struct {
 	*xiaohongshu.NotificationList
 	CacheMeta
+	// History is present only when the caller passed since_cursor. Its absence
+	// keeps an ordinary listing's response shape exactly as it was.
+	History *NotificationHistory `json:"history,omitempty"`
+}
+
+// NotificationHistory is the incremental view of a notification tab (issue #7,
+// WS3): everything recorded after the caller's cursor, and the cursor to hand
+// back next time.
+//
+// New is the number of items in this response, which is what the caller has
+// not seen. It is not the number of rows the refresh added to the log: a
+// caller polling from an old cursor is owed everything since that cursor,
+// whether the log learned it a minute ago or last week.
+type NotificationHistory struct {
+	SinceCursor string `json:"since_cursor"`
+	NextCursor  string `json:"next_cursor"`
+	New         int    `json:"new"`
 }
 
 // UnreadCountResponse wraps the unread counters with cache metadata.
@@ -173,8 +190,9 @@ type ActionResult struct {
 
 // ListNotificationsRequest 通知列表请求
 type ListNotificationsRequest struct {
-	Tab   string `json:"tab,omitempty"`
-	Limit int    `json:"limit,omitempty"`
+	Tab         string `json:"tab,omitempty"`
+	Limit       int    `json:"limit,omitempty"`
+	SinceCursor string `json:"since_cursor,omitempty"`
 }
 
 // ReplyNotificationRequest 通知回复请求

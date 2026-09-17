@@ -206,13 +206,41 @@ type Store interface {
 	Close() error
 }
 
+// NoteSource is the provenance of one note: which surface handed out its
+// xsec_token, and the referrer that surface would have sent.
+//
+// SeenAt is when the token was handed to us. A zero SeenAt on the way in is
+// filled from the store's clock, exactly as Doc.FetchedAt is.
+type NoteSource struct {
+	FeedID   string
+	Source   string
+	Referrer string
+	SeenAt   time.Time
+}
+
 // NoteSourceStore is an optional capability, type-asserted by its consumer.
 // It persists the provenance of a note (which listing it was opened from) so
 // that a restart does not desynchronise provenance from the cached listing it
 // came out of. A store that does not implement it keeps the in-memory table.
+//
+// Identity is (account, FeedID); remembering the same note again overwrites
+// the record, because the newest surface is the one whose token we now hold.
 type NoteSourceStore interface {
-	RememberNoteSource(ctx context.Context, account, feedID, source, referrer string) error
-	LookupNoteSource(ctx context.Context, account, feedID string) (source, referrer string, err error)
+	RememberNoteSource(ctx context.Context, account string, src NoteSource) error
+
+	// LookupNoteSource returns the provenance of one note, or ErrNotFound when
+	// there is none or the record is older than maxAge. A maxAge of zero or
+	// less applies no age filter. Age is measured against the store's clock,
+	// the way PruneDocs measures retention; the caller states the window
+	// rather than filtering afterwards, so a stale row never crosses the wire.
+	LookupNoteSource(ctx context.Context, account, feedID string, maxAge time.Duration) (NoteSource, error)
+
+	// PruneNoteSources deletes records, across all accounts, older than
+	// olderThan ago, and returns how many went. Like PruneDocs, a zero or
+	// negative duration is a no-op returning 0. Provenance is a cache, not a
+	// log: a record past its window can never be used again, so nothing is
+	// lost by removing it.
+	PruneNoteSources(ctx context.Context, olderThan time.Duration) (int64, error)
 }
 
 // PacingStateStore is an optional capability, type-asserted by its consumer.

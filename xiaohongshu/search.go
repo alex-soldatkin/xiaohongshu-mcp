@@ -154,7 +154,7 @@ func (s *SearchAction) Search(ctx context.Context, keyword string, filters ...Fi
 	notes := onlyNotes(feeds)
 	// Remember where these tokens came from, so opening one of them later
 	// declares pc_search and a search-page Referer instead of claiming the feed.
-	noteSources.rememberFeeds(notes, xsecSourceSearch, currentURL(page))
+	rememberFeedSources(ctx, notes, xsecSourceSearch, currentURL(page))
 
 	return notes, nil
 }

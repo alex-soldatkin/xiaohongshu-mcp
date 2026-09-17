@@ -562,6 +562,12 @@ request against the account's hourly read budget — which is the point: data yo
 already hold should not be re-fetched, both because it is slow and because the
 re-fetch is traffic.
 
+The notification history is queryable. Pass `since_cursor: "start"` to
+`list_notifications` for a first sync, then hand back the `history.next_cursor`
+it returns and each later call answers with only what has arrived since — at
+most `limit` items, from the log rather than from a fresh scrape. Without a
+database, `since_cursor` is an error rather than a silently full listing.
+
 A cached read is marked as such: responses carry `cached: true` and
 `fetched_at` when they came out of the store, and `fetched_at` alone when they
 came off the site. Neither field appears at all when no database is

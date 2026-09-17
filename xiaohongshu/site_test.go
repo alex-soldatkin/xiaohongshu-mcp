@@ -1,6 +1,7 @@
 package xiaohongshu
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -87,7 +88,7 @@ func TestSetSiteRewiresLandingPages(t *testing.T) {
 
 	// Everything derived from them follows: the note-source fallback referrer,
 	// the sidebar predicate and the builders.
-	_, referrer := feedEntryPoint("never-seen")
+	_, referrer := feedEntryPoint(context.Background(), "never-seen")
 	assert.Equal(t, "https://www.rednote.com/explore", referrer)
 	assert.True(t, onMainSite("https://www.rednote.com/explore"))
 	assert.False(t, onMainSite("https://www.xiaohongshu.com/explore"))

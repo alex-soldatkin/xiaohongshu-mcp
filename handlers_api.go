@@ -439,9 +439,10 @@ func (s *AppServer) listNotificationsHandler(c *gin.Context) {
 		if limit, err := strconv.Atoi(c.Query("limit")); err == nil {
 			req.Limit = limit
 		}
+		req.SinceCursor = c.Query("since_cursor")
 	}
 
-	result, err := s.xiaohongshuService.ListNotifications(c.Request.Context(), req.Tab, req.Limit)
+	result, err := s.xiaohongshuService.ListNotifications(c.Request.Context(), req.Tab, req.Limit, req.SinceCursor)
 	if err != nil {
 		respondServiceError(c, "LIST_NOTIFICATIONS_FAILED",
 			"获取通知列表失败", err)

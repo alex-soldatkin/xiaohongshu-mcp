@@ -140,8 +140,9 @@ type FavoriteFeedArgs struct {
 
 // ListNotificationsArgs 通知列表参数
 type ListNotificationsArgs struct {
-	Tab   string `json:"tab,omitempty" jsonschema:"通知分区: mentions(评论和@,默认)|likes(赞和收藏)|connections(新增关注)"`
-	Limit int    `json:"limit,omitempty" jsonschema:"返回条数上限，默认20"`
+	Tab         string `json:"tab,omitempty" jsonschema:"通知分区: mentions(评论和@,默认)|likes(赞和收藏)|connections(新增关注)"`
+	Limit       int    `json:"limit,omitempty" jsonschema:"返回条数上限，默认20；传 since_cursor 时同时限制本次返回的历史条数"`
+	SinceCursor string `json:"since_cursor,omitempty" jsonschema:"增量拉取：只返回该游标之后新出现的通知。首次同步传 start，之后传上一次返回的 history.next_cursor；留空则不走增量，照常返回整页列表。每次最多返回 limit 条(默认20)，取满说明还有，带新游标再调一次即可。需要配置持久化存储(XHS_DATABASE_URL)，未配置时报错而不是悄悄退回全量"`
 	RefreshArgs
 }
 
@@ -545,7 +546,7 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 	mcp.AddTool(server,
 		&mcp.Tool{
 			Name:        "list_notifications",
-			Description: "获取通知列表。返回评论内容、评论者、以及对应笔记的 feed_id 和 xsec_token（可用于 get_feed_detail 读原帖）。已删除或不可见的条目会被过滤，过滤数量见 filtered 字段。注意：真正访问页面时会清除该分区的未读标记（只需要未读数时用 get_unread_count）；命中本地缓存直接返回时不访问页面，也就不会清除未读标记，需要清除请传 force_refresh=true。",
+			Description: "获取通知列表。返回评论内容、评论者、以及对应笔记的 feed_id 和 xsec_token（可用于 get_feed_detail 读原帖）。已删除或不可见的条目会被过滤，过滤数量见 filtered 字段。注意：真正访问页面时会清除该分区的未读标记（只需要未读数时用 get_unread_count）；命中本地缓存直接返回时不访问页面，也就不会清除未读标记，需要清除请传 force_refresh=true。传 since_cursor 可以只取上次之后的新通知，游标见返回里的 history.next_cursor。",
 			Annotations: &mcp.ToolAnnotations{
 				Title:        "List Notifications",
 				ReadOnlyHint: true,
@@ -553,7 +554,7 @@ func registerTools(server *mcp.Server, appServer *AppServer) {
 		},
 		withPanicRecovery("list_notifications", func(ctx context.Context, req *mcp.CallToolRequest, args ListNotificationsArgs) (*mcp.CallToolResult, any, error) {
 			ctx = withForceRefresh(ctx, args.ForceRefresh)
-			result := appServer.handleListNotifications(ctx, args.Tab, args.Limit)
+			result := appServer.handleListNotifications(ctx, args.Tab, args.Limit, args.SinceCursor)
 			return convertToMCPResult(result), nil, nil
 		}),
 	)

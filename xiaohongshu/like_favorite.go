@@ -44,7 +44,7 @@ func newInteractAction(page *rod.Page) *interactAction {
 
 func (a *interactAction) preparePage(ctx context.Context, actionType interactActionType, feedID, xsecToken string) (*rod.Page, error) {
 	page := a.page.Context(ctx).Timeout(60 * time.Second)
-	source, referrer := feedEntryPoint(feedID)
+	source, referrer := feedEntryPoint(ctx, feedID)
 	url := makeFeedDetailURL(feedID, xsecToken, source)
 	logrus.Infof("Opening feed detail page for %s: %s", actionType, url)
 

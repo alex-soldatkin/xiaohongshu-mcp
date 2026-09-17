@@ -99,7 +99,7 @@ func (f *FeedDetailAction) GetFeedDetailWithConfig(ctx context.Context, feedID, 
 	config = config.normalize()
 
 	page := f.page.Context(ctx).Timeout(10 * time.Minute)
-	source, referrer := feedEntryPoint(feedID)
+	source, referrer := feedEntryPoint(ctx, feedID)
 	url := makeFeedDetailURL(feedID, xsecToken, source)
 
 	logrus.Infof("打开 feed 详情页: %s", url)

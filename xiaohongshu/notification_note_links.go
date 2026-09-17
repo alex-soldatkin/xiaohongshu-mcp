@@ -1,6 +1,7 @@
 package xiaohongshu
 
 import (
+	"context"
 	"net/url"
 	"regexp"
 	"strings"
@@ -91,7 +92,7 @@ func noteIDFromPath(path string) (string, bool) {
 //
 // Reading hrefs is cheap and cannot fail the caller: a layout without links
 // simply teaches us nothing.
-func rememberNotificationNoteLinks(page *rod.Page) int {
+func rememberNotificationNoteLinks(ctx context.Context, page *rod.Page) int {
 	// Narrowed to links that carry a token, so this stays a handful of
 	// round-trips rather than one per anchor on the page.
 	elems, err := page.Elements(`a[href*="xsec_token"]`)
@@ -111,7 +112,7 @@ func rememberNotificationNoteLinks(page *rod.Page) int {
 
 	links := parseNoteLinks(hrefs)
 	for _, link := range links {
-		noteSources.remember(link.id, link.source, urlNotification)
+		rememberNoteSource(ctx, link.id, link.source, urlNotification)
 	}
 	if len(links) > 0 {
 		logrus.Debugf("从通知页记下 %d 条笔记的来源（xsec_source 取自站点自己的链接）", len(links))

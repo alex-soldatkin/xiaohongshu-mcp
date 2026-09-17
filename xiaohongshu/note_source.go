@@ -1,6 +1,7 @@
 package xiaohongshu
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -22,22 +23,46 @@ type noteEntryPoint struct {
 }
 
 const (
-	// A token older than this is not worth claiming provenance for: the search
-	// page it came from is long gone, and a stale claim is worse than the
-	// honest default.
-	noteSourceTTL = 30 * time.Minute
-	// Bound on remembered notes. One search or profile page yields a few dozen,
-	// so this holds roughly the last ten pages an agent looked at.
+	// NoteSourceTTL bounds how long a provenance record is worth claiming.
+	// Past it the search page the token came from is long gone, and a stale
+	// claim is worse than the honest default. Exported because a persistent
+	// implementation has to apply the same window in its own query.
+	//
+	// The measurement in #18 puts the token's own lifetime at hours, so this
+	// window sits comfortably inside it: a record that is still valid here
+	// describes a token that still works.
+	NoteSourceTTL = 30 * time.Minute
+
+	// noteSourceCapacity bounds the in-memory table. One search or profile
+	// page yields a few dozen notes, so this holds roughly the last ten pages
+	// an agent looked at. A store-backed implementation needs no such cap —
+	// it has a retention sweep instead.
 	noteSourceCapacity = 512
 )
 
-// noteSourceTable remembers, per note id, which page handed out its token.
+// NoteSources remembers, per note id, which page handed out that note's
+// xsec_token, and hands the pair back when the note is opened.
 //
 // This is the "session context" the xsec_source is inferred from. It is
 // deliberately not an MCP tool argument: an agent asked to supply a source
 // would have to guess, and a guess that contradicts the Referer is worse than
 // no claim at all. Here the two are derived from the same record, so they
 // cannot disagree.
+//
+// The seam exists so that the record can outlive the process when a store is
+// configured (issue #7, WS4). The default implementation is the in-memory
+// table below, so a deployment with no database behaves exactly as it did
+// before the seam existed.
+//
+// Neither method returns an error: provenance is advisory. A backend that is
+// down means the default entry point is used, which is what happens when
+// nothing was remembered anyway.
+type NoteSources interface {
+	Remember(ctx context.Context, feedID, source, referrer string)
+	Lookup(ctx context.Context, feedID string) (source, referrer string, ok bool)
+}
+
+// noteSourceTable is the in-memory NoteSources, and the default.
 type noteSourceTable struct {
 	mu      sync.Mutex
 	entries map[string]noteEntryPoint
@@ -51,12 +76,52 @@ func newNoteSourceTable() *noteSourceTable {
 	}
 }
 
+// NewMemoryNoteSources returns an independent in-memory implementation. A
+// store-backed implementation uses one as its fallback for the window before
+// the account id is known, which is precisely the window in which the first
+// listing of every restart is read.
+func NewMemoryNoteSources() NoteSources { return newNoteSourceTable() }
+
 // noteSources is process-wide because the entry point outlives any single
 // action object: the search that produced a token and the comment that uses it
 // are separate tool calls with separate actions.
-var noteSources = newNoteSourceTable()
+var (
+	noteSourcesMu sync.RWMutex
+	noteSources   NoteSources = newNoteSourceTable()
+)
 
-func (t *noteSourceTable) remember(feedID, source, referrer string) {
+// SetNoteSources installs a different implementation, once, at startup. Passing
+// nil restores the in-memory default.
+func SetNoteSources(s NoteSources) {
+	noteSourcesMu.Lock()
+	defer noteSourcesMu.Unlock()
+
+	if s == nil {
+		s = newNoteSourceTable()
+	}
+	noteSources = s
+}
+
+func currentNoteSources() NoteSources {
+	noteSourcesMu.RLock()
+	defer noteSourcesMu.RUnlock()
+	return noteSources
+}
+
+// rememberNoteSource records where one note's token came from.
+func rememberNoteSource(ctx context.Context, feedID, source, referrer string) {
+	currentNoteSources().Remember(ctx, feedID, source, referrer)
+}
+
+// rememberFeedSources records a whole listing at once.
+func rememberFeedSources(ctx context.Context, feeds []Feed, source, referrer string) {
+	ns := currentNoteSources()
+	for _, f := range feeds {
+		ns.Remember(ctx, f.ID, source, referrer)
+	}
+}
+
+func (t *noteSourceTable) Remember(_ context.Context, feedID, source, referrer string) {
 	if feedID == "" || source == "" {
 		return
 	}
@@ -70,32 +135,26 @@ func (t *noteSourceTable) remember(feedID, source, referrer string) {
 	t.entries[feedID] = noteEntryPoint{source: source, referrer: referrer, at: t.now()}
 }
 
-func (t *noteSourceTable) rememberFeeds(feeds []Feed, source, referrer string) {
-	for _, f := range feeds {
-		t.remember(f.ID, source, referrer)
-	}
-}
-
-func (t *noteSourceTable) lookup(feedID string) (noteEntryPoint, bool) {
+func (t *noteSourceTable) Lookup(_ context.Context, feedID string) (string, string, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	e, ok := t.entries[feedID]
 	if !ok {
-		return noteEntryPoint{}, false
+		return "", "", false
 	}
-	if t.now().Sub(e.at) > noteSourceTTL {
+	if t.now().Sub(e.at) > NoteSourceTTL {
 		delete(t.entries, feedID)
-		return noteEntryPoint{}, false
+		return "", "", false
 	}
-	return e, true
+	return e.source, e.referrer, true
 }
 
 // evictLocked drops expired entries first, then the oldest one if still full.
 func (t *noteSourceTable) evictLocked() {
 	now := t.now()
 	for id, e := range t.entries {
-		if now.Sub(e.at) > noteSourceTTL {
+		if now.Sub(e.at) > NoteSourceTTL {
 			delete(t.entries, id)
 		}
 	}
@@ -119,9 +178,12 @@ func (t *noteSourceTable) evictLocked() {
 // With no record it falls back to the feed: that is the commonest entry point,
 // and it is the value that used to be hard-coded for every note, so "we don't
 // know" is at least no worse than the old behaviour.
-func feedEntryPoint(feedID string) (source, referrer string) {
-	if e, ok := noteSources.lookup(feedID); ok {
-		return e.source, e.referrer
+//
+// It takes a context because a store-backed NoteSources issues a query here;
+// every caller already has one.
+func feedEntryPoint(ctx context.Context, feedID string) (source, referrer string) {
+	if s, r, ok := currentNoteSources().Lookup(ctx, feedID); ok {
+		return s, r
 	}
 	return xsecSourceFeed, urlExplore
 }

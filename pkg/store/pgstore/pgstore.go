@@ -408,3 +408,77 @@ func (s *Store) AccountBySeed(ctx context.Context, seed int) (store.Account, err
 	a.LastSeen = a.LastSeen.UTC()
 	return a, nil
 }
+
+// --- note sources ----------------------------------------------------------
+//
+// The optional NoteSourceStore capability. It is deliberately a separate
+// interface: a backend may implement store.Store without it, and the consumer
+// type-asserts and falls back to its in-memory table.
+
+// Store implements the optional note-source capability.
+var _ store.NoteSourceStore = (*Store)(nil)
+
+const rememberNoteSourceSQL = `
+	INSERT INTO note_sources (account_id, feed_id, source, referrer, seen_at)
+	VALUES ($1, $2, $3, $4, $5)
+	ON CONFLICT (account_id, feed_id) DO UPDATE
+	SET source = EXCLUDED.source, referrer = EXCLUDED.referrer, seen_at = EXCLUDED.seen_at`
+
+func (s *Store) RememberNoteSource(ctx context.Context, account string, src store.NoteSource) error {
+	seenAt := src.SeenAt
+	if seenAt.IsZero() {
+		seenAt = s.now()
+	}
+
+	// The newest surface wins: it is the one whose token we are holding now.
+	_, err := s.pool.Exec(ctx, rememberNoteSourceSQL,
+		account, src.FeedID, src.Source, src.Referrer, seenAt)
+	if err != nil {
+		return fmt.Errorf("pgstore: remember note source: %w", err)
+	}
+	return nil
+}
+
+// lookupNoteSourceSQL enforces the freshness window in the statement rather
+// than in the caller. $4 is the cutoff, or NULL when no age filter applies.
+const lookupNoteSourceSQL = `
+	SELECT source, referrer, seen_at
+	FROM note_sources
+	WHERE account_id = $1 AND feed_id = $2
+	  AND ($3::timestamptz IS NULL OR seen_at >= $3)`
+
+func (s *Store) LookupNoteSource(ctx context.Context, account, feedID string, maxAge time.Duration) (store.NoteSource, error) {
+	var cutoff any
+	if maxAge > 0 {
+		cutoff = s.now().Add(-maxAge)
+	}
+
+	src := store.NoteSource{FeedID: feedID}
+	err := s.pool.QueryRow(ctx, lookupNoteSourceSQL, account, feedID, cutoff).
+		Scan(&src.Source, &src.Referrer, &src.SeenAt)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// Absent and stale are the same answer on purpose: both mean "claim
+		// nothing about where this token came from".
+		return store.NoteSource{}, store.ErrNotFound
+	case err != nil:
+		return store.NoteSource{}, fmt.Errorf("pgstore: lookup note source: %w", err)
+	}
+
+	src.SeenAt = src.SeenAt.UTC()
+	return src, nil
+}
+
+const pruneNoteSourcesSQL = `DELETE FROM note_sources WHERE seen_at < $1`
+
+func (s *Store) PruneNoteSources(ctx context.Context, olderThan time.Duration) (int64, error) {
+	if olderThan <= 0 {
+		return 0, nil
+	}
+
+	tag, err := s.pool.Exec(ctx, pruneNoteSourcesSQL, s.now().Add(-olderThan))
+	if err != nil {
+		return 0, fmt.Errorf("pgstore: prune note sources: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}

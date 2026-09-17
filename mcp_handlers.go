@@ -805,10 +805,10 @@ func (s *AppServer) handleGetUnreadCount(ctx context.Context) *MCPToolResult {
 }
 
 // handleListNotifications 获取通知列表
-func (s *AppServer) handleListNotifications(ctx context.Context, tab string, limit int) *MCPToolResult {
-	logrus.Infof("MCP: 获取通知列表 tab=%s limit=%d", tab, limit)
+func (s *AppServer) handleListNotifications(ctx context.Context, tab string, limit int, sinceCursor string) *MCPToolResult {
+	logrus.Infof("MCP: 获取通知列表 tab=%s limit=%d since=%q", tab, limit, sinceCursor)
 
-	result, err := s.xiaohongshuService.ListNotifications(ctx, tab, limit)
+	result, err := s.xiaohongshuService.ListNotifications(ctx, tab, limit, sinceCursor)
 	if err != nil {
 		return &MCPToolResult{
 			Content: []MCPContent{{Type: "text", Text: "获取通知列表失败: " + err.Error()}},

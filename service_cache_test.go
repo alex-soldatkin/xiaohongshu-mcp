@@ -532,7 +532,7 @@ func TestListNotificationsTruncatesALongerCachedListing(t *testing.T) {
 	svc.cache.put(ctx, store.KindNotifications, string(xiaohongshu.TabMentions), list,
 		notificationListMeta{Limit: 5}, clock.Now())
 
-	got, err := svc.ListNotifications(ctx, "mentions", 2)
+	got, err := svc.ListNotifications(ctx, "mentions", 2, "")
 	require.NoError(t, err)
 	assert.True(t, got.Cached)
 	require.Len(t, got.Items, 2)
@@ -753,7 +753,7 @@ func TestListNotificationsHitLeavesTheUnreadCountAlone(t *testing.T) {
 		notificationListMeta{Limit: 20}, clock.Now())
 
 	svc.runHook = failingRun(t)
-	got, err := svc.ListNotifications(ctx, "mentions", 20)
+	got, err := svc.ListNotifications(ctx, "mentions", 20, "")
 	require.NoError(t, err)
 	assert.True(t, got.Cached)
 	assert.Empty(t, fake.deleteLog(), "a cached listing changed nothing on the site")

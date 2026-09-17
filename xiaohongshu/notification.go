@@ -161,7 +161,7 @@ func (n *NotificationAction) List(ctx context.Context, tab NotificationTab, limi
 	// The notes named below are opened by a later tool call, by then possibly
 	// from this very page. Read their provenance off the site's own links while
 	// the page is still here.
-	rememberNotificationNoteLinks(page)
+	rememberNotificationNoteLinks(ctx, page)
 
 	items, filtered := convertNotifications(payload.MessageList, limit)
 	return &NotificationList{Tab: tab, Filtered: filtered, Items: items}, nil

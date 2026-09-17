@@ -58,7 +58,7 @@ func (f *FeedsListAction) GetFeedsList(ctx context.Context) ([]Feed, error) {
 	}
 
 	notes := onlyNotes(feeds)
-	noteSources.rememberFeeds(notes, xsecSourceFeed, urlExplore)
+	rememberFeedSources(ctx, notes, xsecSourceFeed, urlExplore)
 
 	return notes, nil
 }

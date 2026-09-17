@@ -62,6 +62,9 @@ func Run(t *testing.T, newStore func(t *testing.T) store.Store) {
 		{"Prune/ByAge", testPruneByAge},
 		{"Prune/NonPositiveIsNoop", testPruneNonPositiveIsNoop},
 		{"Prune/LeavesHistory", testPruneLeavesHistory},
+		{"NoteSources/RememberAndLookup", testNoteSourcesRememberAndLookup},
+		{"NoteSources/Freshness", testNoteSourcesFreshness},
+		{"NoteSources/Prune", testNoteSourcesPrune},
 		{"Close/Idempotent", testCloseIdempotent},
 		{"Concurrency/MixedTraffic", testConcurrency},
 	}
@@ -629,6 +632,106 @@ func testPruneLeavesHistory(t *testing.T, s store.Store) {
 	comments, err := s.CommentsSince(c, acctA, "note-1", "", 0)
 	require.NoError(t, err)
 	require.Len(t, comments, 1)
+}
+
+// noteSources returns the optional capability, or skips the subtest. A backend
+// is free not to implement it — the consumer type-asserts and keeps its
+// in-memory table — but a backend that does implement it owes these three
+// behaviours, which is what stops a second backend from inventing its own
+// answer to "is this record too old".
+func noteSources(t *testing.T, s store.Store) store.NoteSourceStore {
+	t.Helper()
+	ns, ok := s.(store.NoteSourceStore)
+	if !ok {
+		t.Skip("backend does not implement store.NoteSourceStore")
+	}
+	return ns
+}
+
+func testNoteSourcesRememberAndLookup(t *testing.T, s store.Store) {
+	ns := noteSources(t, s)
+	c := ctx(t)
+
+	const search = "https://www.xiaohongshu.com/search_result?keyword=go"
+	require.NoError(t, ns.RememberNoteSource(c, acctA, store.NoteSource{
+		FeedID: "n1", Source: "pc_search", Referrer: search,
+	}))
+
+	got, err := ns.LookupNoteSource(c, acctA, "n1", time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, "pc_search", got.Source)
+	require.Equal(t, search, got.Referrer)
+	// A zero SeenAt on the way in is filled from the store clock, the way
+	// PutDoc fills a zero FetchedAt.
+	require.WithinDuration(t, time.Now(), got.SeenAt, time.Minute)
+
+	// The newest surface wins: the token we hold now came from it.
+	require.NoError(t, ns.RememberNoteSource(c, acctA, store.NoteSource{
+		FeedID: "n1", Source: "pc_note", Referrer: "https://www.xiaohongshu.com/user/profile/u1",
+	}))
+	got, err = ns.LookupNoteSource(c, acctA, "n1", time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, "pc_note", got.Source)
+
+	// Provenance is per account, like every other row in the store.
+	_, err = ns.LookupNoteSource(c, acctB, "n1", time.Hour)
+	require.ErrorIs(t, err, store.ErrNotFound)
+
+	_, err = ns.LookupNoteSource(c, acctA, "never-seen", time.Hour)
+	require.ErrorIs(t, err, store.ErrNotFound)
+}
+
+func testNoteSourcesFreshness(t *testing.T, s store.Store) {
+	ns := noteSources(t, s)
+	c := ctx(t)
+
+	require.NoError(t, ns.RememberNoteSource(c, acctA, store.NoteSource{
+		FeedID: "old", Source: "pc_feed", SeenAt: time.Now().Add(-2 * time.Hour),
+	}))
+
+	// Stale and absent are the same answer, and the window is applied by the
+	// store rather than by the caller afterwards.
+	_, err := ns.LookupNoteSource(c, acctA, "old", time.Hour)
+	require.ErrorIs(t, err, store.ErrNotFound)
+
+	got, err := ns.LookupNoteSource(c, acctA, "old", 3*time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, "pc_feed", got.Source)
+
+	// A non-positive maxAge applies no age filter at all.
+	got, err = ns.LookupNoteSource(c, acctA, "old", 0)
+	require.NoError(t, err)
+	require.Equal(t, "pc_feed", got.Source)
+}
+
+func testNoteSourcesPrune(t *testing.T, s store.Store) {
+	ns := noteSources(t, s)
+	c := ctx(t)
+
+	require.NoError(t, ns.RememberNoteSource(c, acctA, store.NoteSource{
+		FeedID: "stale", Source: "pc_feed", SeenAt: time.Now().Add(-72 * time.Hour),
+	}))
+	require.NoError(t, ns.RememberNoteSource(c, acctB, store.NoteSource{
+		FeedID: "also-stale", Source: "pc_feed", SeenAt: time.Now().Add(-49 * time.Hour),
+	}))
+	require.NoError(t, ns.RememberNoteSource(c, acctA, store.NoteSource{
+		FeedID: "fresh", Source: "pc_feed", SeenAt: time.Now().Add(-time.Minute),
+	}))
+
+	n, err := ns.PruneNoteSources(c, 48*time.Hour)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), n)
+
+	_, err = ns.LookupNoteSource(c, acctA, "fresh", 0)
+	require.NoError(t, err)
+
+	// A missing retention setting arrives as a zero duration and must not be
+	// read as "everything is older than now".
+	n, err = ns.PruneNoteSources(c, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), n)
+	_, err = ns.LookupNoteSource(c, acctA, "fresh", 0)
+	require.NoError(t, err)
 }
 
 func testCloseIdempotent(t *testing.T, s store.Store) {
